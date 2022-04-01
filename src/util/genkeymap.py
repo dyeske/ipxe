@@ -33,6 +33,10 @@ import textwrap
 from typing import ClassVar, Optional
 
 
+BACKSPACE = chr(0x7f)
+"""Backspace character"""
+
+
 class KeyType(IntEnum):
     """Key types"""
 
@@ -52,6 +56,14 @@ class KeyType(IntEnum):
     DEAD2 = 13
     BRL = 14
     UNKNOWN = 0xf0
+
+
+class DeadKey(IntEnum):
+    """Dead keys"""
+
+    GRAVE = 0
+    CIRCUMFLEX = 2
+    TILDE = 3
 
 
 class KeyModifiers(Flag):
@@ -79,7 +91,7 @@ class KeyModifiers(Flag):
         return 3 + bin(self.value).count('1')
 
 
-@dataclass
+@dataclass(frozen=True)
 class Key:
     """A single key definition"""
 
@@ -95,6 +107,13 @@ class Key:
     ASCII_TYPES: ClassVar[set[KeyType]] = {KeyType.LATIN, KeyType.ASCII,
                                            KeyType.LETTER}
     """Key types with direct ASCII values"""
+
+    DEAD_KEYS: ClassVar[Mapping[int, str]] = {
+        DeadKey.GRAVE: '`',
+        DeadKey.CIRCUMFLEX: '^',
+        DeadKey.TILDE: '~',
+    }
+    """Dead key replacement ASCII values"""
 
     @property
     def keytype(self) -> Optional[KeyType]:
@@ -112,16 +131,19 @@ class Key:
     @property
     def ascii(self) -> Optional[str]:
         """ASCII character"""
-        if self.keytype in self.ASCII_TYPES:
-            value = self.value
+        keytype = self.keytype
+        value = self.value
+        if keytype in self.ASCII_TYPES:
             char = chr(value)
             if value and char.isascii():
                 return char
+        if keytype == KeyType.DEAD:
+            return self.DEAD_KEYS.get(value)
         return None
 
 
-class KeyMapping(UserDict[KeyModifiers, Sequence[Key]]):
-    """A keyboard mapping"""
+class KeyLayout(UserDict[KeyModifiers, Sequence[Key]]):
+    """A keyboard layout"""
 
     BKEYMAP_MAGIC: ClassVar[bytes] = b'bkeymap'
     """Magic signature for output produced by 'loadkeys -b'"""
@@ -156,23 +178,34 @@ class KeyMapping(UserDict[KeyModifiers, Sequence[Key]]):
             KeyModifiers.NONE: [(KEY_NON_US, ord('\\'))],
             KeyModifiers.SHIFT: [(KEY_NON_US, ord('|'))],
             # Treat Ctrl-Backspace as producing Backspace rather than Ctrl-H
-            KeyModifiers.CTRL: [(KEY_BACKSPACE, 0x7f)],
+            KeyModifiers.CTRL: [(KEY_BACKSPACE, ord(BACKSPACE))],
+        },
+        'il': {
+            # Redefine some otherwise unreachable ASCII characters
+            # using the closest available approximation
+            KeyModifiers.ALTGR: [(0x28, ord('\'')), (0x2b, ord('`')),
+                                 (0x35, ord('/'))],
+        },
+        'mt': {
+            # Redefine erroneous key 86 as generating "\\|"
+            KeyModifiers.NONE: [(KEY_NON_US, ord('\\'))],
+            KeyModifiers.SHIFT: [(KEY_NON_US, ord('|'))],
         },
     }
     """Fixups for erroneous keymappings produced by 'loadkeys -b'"""
 
     @property
     def unshifted(self):
-        """Basic unshifted key mapping"""
+        """Basic unshifted keyboard layout"""
         return self[KeyModifiers.NONE]
 
     @property
     def shifted(self):
-        """Basic shifted key mapping"""
+        """Basic shifted keyboard layout"""
         return self[KeyModifiers.SHIFT]
 
     @classmethod
-    def load(cls, name: str) -> KeyMapping:
+    def load(cls, name: str) -> KeyLayout:
         """Load keymap using 'loadkeys -b'"""
         bkeymap = subprocess.check_output(["loadkeys", "-u", "-b", name])
         if not bkeymap.startswith(cls.BKEYMAP_MAGIC):
@@ -181,21 +214,21 @@ class KeyMapping(UserDict[KeyModifiers, Sequence[Key]]):
         included = bkeymap[:cls.MAX_NR_KEYMAPS]
         if len(included) != cls.MAX_NR_KEYMAPS:
             raise ValueError("Invalid bkeymap inclusion list")
-        keymaps = bkeymap[cls.MAX_NR_KEYMAPS:]
+        bkeymap = bkeymap[cls.MAX_NR_KEYMAPS:]
         keys = {}
         for modifiers in map(KeyModifiers, range(cls.MAX_NR_KEYMAPS)):
             if included[modifiers.value]:
                 fmt = Struct('<%dH' % cls.NR_KEYS)
-                keymap = keymaps[:fmt.size]
-                if len(keymap) != fmt.size:
+                bkeylist = bkeymap[:fmt.size]
+                if len(bkeylist) != fmt.size:
                     raise ValueError("Invalid bkeymap map %#x" %
                                      modifiers.value)
                 keys[modifiers] = [
                     Key(modifiers=modifiers, keycode=keycode, keysym=keysym)
-                    for keycode, keysym in enumerate(fmt.unpack(keymap))
+                    for keycode, keysym in enumerate(fmt.unpack(bkeylist))
                 ]
-                keymaps = keymaps[len(keymap):]
-        if keymaps:
+                bkeymap = bkeymap[len(bkeylist):]
+        if bkeymap:
             raise ValueError("Trailing bkeymap data")
         for modifiers, fixups in cls.FIXUPS.get(name, {}).items():
             for keycode, keysym in fixups:
@@ -218,8 +251,8 @@ class KeyMapping(UserDict[KeyModifiers, Sequence[Key]]):
         }
 
 
-class BiosKeyMapping(KeyMapping):
-    """Keyboard mapping as used by the BIOS
+class BiosKeyLayout(KeyLayout):
+    """Keyboard layout as used by the BIOS
 
     To allow for remappings of the somewhat interesting key 86, we
     arrange for our keyboard drivers to generate this key as "\\|"
@@ -247,33 +280,67 @@ class BiosKeyMapping(KeyMapping):
         return inverse
 
 
+class KeymapKeys(UserDict[str, Optional[str]]):
+    """An ASCII character remapping"""
+
+    @classmethod
+    def ascii_name(cls, char: str) -> str:
+        """ASCII character name"""
+        if char == '\\':
+            name = "'\\\\'"
+        elif char == '\'':
+            name = "'\\\''"
+        elif ord(char) & BiosKeyLayout.KEY_PSEUDO:
+            name = "Pseudo-%s" % cls.ascii_name(
+                chr(ord(char) & ~BiosKeyLayout.KEY_PSEUDO)
+            )
+        elif char.isprintable():
+            name = "'%s'" % char
+        elif ord(char) <= 0x1a:
+            name = "Ctrl-%c" % (ord(char) + 0x40)
+        else:
+            name = "0x%02x" % ord(char)
+        return name
+
+    @property
+    def code(self):
+        """Generated source code for C array"""
+        return '{\n' + ''.join(
+            '\t{ 0x%02x, 0x%02x },\t/* %s => %s */\n' % (
+                ord(source), ord(target),
+                self.ascii_name(source), self.ascii_name(target)
+            )
+            for source, target in self.items()
+            if target
+            and ord(source) & ~BiosKeyLayout.KEY_PSEUDO != ord(target)
+        ) + '\t{ 0, 0 }\n}'
+
+
 @dataclass
-class KeyRemapping:
-    """A keyboard remapping"""
+class Keymap:
+    """An iPXE keyboard mapping"""
 
     name: str
     """Mapping name"""
 
-    source: KeyMapping
-    """Source keyboard mapping"""
+    source: KeyLayout
+    """Source keyboard layout"""
 
-    target: KeyMapping
-    """Target keyboard mapping"""
+    target: KeyLayout
+    """Target keyboard layout"""
 
     @property
-    def ascii(self) -> MutableMapping[str, str]:
-        """Remapped ASCII key table"""
+    def basic(self) -> KeymapKeys:
+        """Basic remapping table"""
         # Construct raw mapping from source ASCII to target ASCII
         raw = {source: self.target[key.modifiers][key.keycode].ascii
                for source, key in self.source.inverse.items()}
-        # Eliminate any null mappings, mappings that attempt to remap
-        # the backspace key, or mappings that would become identity
-        # mappings after clearing the high bit
+        # Eliminate any identity mappings, or mappings that attempt to
+        # remap the backspace key
         table = {source: target for source, target in raw.items()
-                 if target
-                 and ord(source) != 0x7f
-                 and ord(target) != 0x7f
-                 and ord(source) & ~BiosKeyMapping.KEY_PSEUDO != ord(target)}
+                 if source != target
+                 and source != BACKSPACE
+                 and target != BACKSPACE}
         # Recursively delete any mappings that would produce
         # unreachable alphanumerics (e.g. the "il" keymap, which maps
         # away the whole lower-case alphabet)
@@ -286,40 +353,55 @@ class KeyRemapping:
         # Sanity check: ensure that all numerics are reachable using
         # the same shift state
         digits = '1234567890'
-        unshifted = ''.join(table.get(x, x) for x in '1234567890')
-        shifted = ''.join(table.get(x, x) for x in '!@#$%^&*()')
+        unshifted = ''.join(table.get(x) or x for x in '1234567890')
+        shifted = ''.join(table.get(x) or x for x in '!@#$%^&*()')
         if digits not in (shifted, unshifted):
             raise ValueError("Inconsistent numeric remapping %s / %s" %
                              (unshifted, shifted))
-        return dict(sorted(table.items()))
+        return KeymapKeys(dict(sorted(table.items())))
 
     @property
-    def cname(self) -> str:
-        """C variable name"""
-        return re.sub(r'\W', '_', self.name) + "_mapping"
+    def altgr(self) -> KeymapKeys:
+        """AltGr remapping table"""
+        # Construct raw mapping from source ASCII to target ASCII
+        raw = {
+            source: next((self.target[x][key.keycode].ascii
+                          for x in (key.modifiers | KeyModifiers.ALTGR,
+                                    KeyModifiers.ALTGR, key.modifiers)
+                          if x in self.target
+                          and self.target[x][key.keycode].ascii), None)
+            for source, key in self.source.inverse.items()
+        }
+        # Identify printable keys that are unreachable via the basic map
+        basic = self.basic
+        unmapped = set(x for x in basic.keys()
+                       if x.isascii() and x.isprintable())
+        remapped = set(basic.values())
+        unreachable = unmapped - remapped
+        # Eliminate any mappings for unprintable characters, or
+        # mappings for characters that are reachable via the basic map
+        table = {source: target for source, target in raw.items()
+                 if source.isprintable()
+                 and target in unreachable}
+        # Check that all characters are now reachable
+        unreachable -= set(table.values())
+        if unreachable:
+            raise ValueError("Unreachable characters: %s" % ', '.join(
+                KeymapKeys.ascii_name(x) for x in sorted(unreachable)
+            ))
+        return KeymapKeys(dict(sorted(table.items())))
 
-    @classmethod
-    def ascii_name(cls, char: str) -> str:
-        """ASCII character name"""
-        if char == '\\':
-            name = "'\\\\'"
-        elif char == '\'':
-            name = "'\\\''"
-        elif ord(char) & BiosKeyMapping.KEY_PSEUDO:
-            name = "Pseudo-%s" % cls.ascii_name(
-                chr(ord(char) & ~BiosKeyMapping.KEY_PSEUDO)
-            )
-        elif char.isprintable():
-            name = "'%s'" % char
-        elif ord(char) <= 0x1a:
-            name = "Ctrl-%c" % (ord(char) + 0x40)
-        else:
-            name = "0x%02x" % ord(char)
-        return name
+    def cname(self, suffix: str) -> str:
+        """C variable name"""
+        return re.sub(r'\W', '_', (self.name + '_' + suffix))
 
     @property
     def code(self) -> str:
         """Generated source code"""
+        keymap_name = self.cname("keymap")
+        basic_name = self.cname("basic")
+        altgr_name = self.cname("altgr")
+        attribute = "__keymap_default" if self.name == "us" else "__keymap"
         code = textwrap.dedent(f"""
         /** @file
          *
@@ -333,17 +415,19 @@ class KeyRemapping:
 
         #include <ipxe/keymap.h>
 
-        /** "{self.name}" keyboard mapping */
-        struct key_mapping {self.cname}[] __keymap = {{
-        """).lstrip() + ''.join(
-            '\t{ 0x%02x, 0x%02x },\t/* %s => %s */\n' % (
-                ord(source), ord(target),
-                self.ascii_name(source), self.ascii_name(target)
-            )
-            for source, target in self.ascii.items()
-        ) + textwrap.dedent("""
-        };
-        """).strip()
+        /** "{self.name}" basic remapping */
+        static struct keymap_key {basic_name}[] = %s;
+
+        /** "{self.name}" AltGr remapping */
+        static struct keymap_key {altgr_name}[] = %s;
+
+        /** "{self.name}" keyboard map */
+        struct keymap {keymap_name} {attribute} = {{
+        \t.name = "{self.name}",
+        \t.basic = {basic_name},
+        \t.altgr = {altgr_name},
+        }};
+        """).strip() % (self.basic.code, self.altgr.code)
         return code
 
 
@@ -356,12 +440,12 @@ if __name__ == '__main__':
     parser.add_argument('layout', help="Target keyboard layout")
     args = parser.parse_args()
 
-    # Load source and target keymaps
-    source = BiosKeyMapping.load('us')
-    target = KeyMapping.load(args.layout)
+    # Load source and target keyboard layouts
+    source = BiosKeyLayout.load('us')
+    target = KeyLayout.load(args.layout)
 
-    # Construct remapping
-    remap = KeyRemapping(name=args.layout, source=source, target=target)
+    # Construct keyboard mapping
+    keymap = Keymap(name=args.layout, source=source, target=target)
 
     # Output generated code
-    print(remap.code)
+    print(keymap.code)

@@ -10,8 +10,8 @@ FILE_LICENCE ( PUBLIC_DOMAIN );
 
 #include <ipxe/keymap.h>
 
-/** "fr" keyboard mapping */
-struct key_mapping fr_mapping[] __keymap = {
+/** "fr" basic remapping */
+static struct keymap_key fr_basic[] = {
 	{ 0x01, 0x11 },	/* Ctrl-A => Ctrl-Q */
 	{ 0x11, 0x01 },	/* Ctrl-Q => Ctrl-A */
 	{ 0x17, 0x1a },	/* Ctrl-W => Ctrl-Z */
@@ -49,6 +49,7 @@ struct key_mapping fr_mapping[] __keymap = {
 	{ 0x51, 0x41 },	/* 'Q' => 'A' */
 	{ 0x57, 0x5a },	/* 'W' => 'Z' */
 	{ 0x5a, 0x57 },	/* 'Z' => 'W' */
+	{ 0x5b, 0x5e },	/* '[' => '^' */
 	{ 0x5c, 0x2a },	/* '\\' => '*' */
 	{ 0x5d, 0x24 },	/* ']' => '$' */
 	{ 0x5e, 0x36 },	/* '^' => '6' */
@@ -59,4 +60,37 @@ struct key_mapping fr_mapping[] __keymap = {
 	{ 0x7a, 0x77 },	/* 'z' => 'w' */
 	{ 0xdc, 0x3c },	/* Pseudo-'\\' => '<' */
 	{ 0xfc, 0x3e },	/* Pseudo-'|' => '>' */
+	{ 0, 0 }
+};
+
+/** "fr" AltGr remapping */
+static struct keymap_key fr_altgr[] = {
+	{ 0x25, 0x5b },	/* '%' => '[' */
+	{ 0x26, 0x60 },	/* '&' => '`' */
+	{ 0x29, 0x40 },	/* ')' => '@' */
+	{ 0x2a, 0x5c },	/* '*' => '\\' */
+	{ 0x2b, 0x7d },	/* '+' => '}' */
+	{ 0x2d, 0x5d },	/* '-' => ']' */
+	{ 0x30, 0x40 },	/* '0' => '@' */
+	{ 0x33, 0x23 },	/* '3' => '#' */
+	{ 0x34, 0x7b },	/* '4' => '{' */
+	{ 0x35, 0x5b },	/* '5' => '[' */
+	{ 0x36, 0x7c },	/* '6' => '|' */
+	{ 0x37, 0x60 },	/* '7' => '`' */
+	{ 0x38, 0x5c },	/* '8' => '\\' */
+	{ 0x3d, 0x7d },	/* '=' => '}' */
+	{ 0x41, 0x40 },	/* 'A' => '@' */
+	{ 0x5c, 0x60 },	/* '\\' => '`' */
+	{ 0x5e, 0x7c },	/* '^' => '|' */
+	{ 0x5f, 0x5d },	/* '_' => ']' */
+	{ 0x61, 0x40 },	/* 'a' => '@' */
+	{ 0xdc, 0x7c },	/* Pseudo-'\\' => '|' */
+	{ 0, 0 }
+};
+
+/** "fr" keyboard map */
+struct keymap fr_keymap __keymap = {
+	.name = "fr",
+	.basic = fr_basic,
+	.altgr = fr_altgr,
 };
