@@ -2,6 +2,9 @@ name: Build
 
 on: push
 
+env:
+  PRIMARY_NODEJS_VERSION: 16
+
 jobs:
 
   x86:
@@ -12,7 +15,6 @@ jobs:
         uses: actions/checkout@v2
         with:
           fetch-depth: 0
-          node-version: '16.x'
       - name: Install packages
         run: |
           sudo dpkg --add-architecture i386
@@ -39,7 +41,6 @@ jobs:
         uses: actions/checkout@v2
         with:
           fetch-depth: 0
-          node-version: '16.x'
       - name: Install packages
         run: |
           sudo apt update
@@ -60,7 +61,6 @@ jobs:
         uses: actions/checkout@v2
         with:
           fetch-depth: 0
-          node-version: '16.x'
       - name: Install packages
         run: |
           sudo apt update
