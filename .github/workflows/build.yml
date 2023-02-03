@@ -2,9 +2,6 @@ name: Build
 
 on: push
 
-env:
-  PRIMARY_NODEJS_VERSION: 16
-
 jobs:
 
   x86:
@@ -12,7 +9,7 @@ jobs:
     runs-on: ubuntu-20.04
     steps:
       - name: Check out code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           fetch-depth: 0
       - name: Install packages
@@ -38,7 +35,7 @@ jobs:
     runs-on: ubuntu-20.04
     steps:
       - name: Check out code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           fetch-depth: 0
       - name: Install packages
@@ -58,7 +55,7 @@ jobs:
     runs-on: ubuntu-20.04
     steps:
       - name: Check out code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           fetch-depth: 0
       - name: Install packages
