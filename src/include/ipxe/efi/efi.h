@@ -43,10 +43,19 @@ FILE_LICENCE ( GPL2_OR_LATER );
  * checking somewhat useless.  Work around this bizarre sabotage
  * attempt by redefining EFI_HANDLE as a pointer to an anonymous
  * structure.
+ *
+ * EFI headers perform some ABI validation checks via _Static_assert()
+ * that may fail when EFI headers are included on a non-EFI platform.
+ * Temporarily disable static assertions to allow these headers to be
+ * included.
  */
 #define EFI_HANDLE STUPID_EFI_HANDLE
+#ifndef PLATFORM_efi
+#define _Static_assert(expr, msg)
+#endif
 #include <ipxe/efi/Uefi/UefiBaseType.h>
 #undef EFI_HANDLE
+#undef _Static_assert
 typedef struct {} *EFI_HANDLE;
 
 /* Include the top-level EFI header files */
@@ -175,14 +184,26 @@ extern EFI_GUID efi_console_control_protocol_guid;
 extern EFI_GUID efi_device_path_protocol_guid;
 extern EFI_GUID efi_dhcp4_protocol_guid;
 extern EFI_GUID efi_dhcp4_service_binding_protocol_guid;
+extern EFI_GUID efi_dhcp6_protocol_guid;
+extern EFI_GUID efi_dhcp6_service_binding_protocol_guid;
 extern EFI_GUID efi_disk_io_protocol_guid;
+extern EFI_GUID efi_dns4_protocol_guid;
+extern EFI_GUID efi_dns4_service_binding_protocol_guid;
+extern EFI_GUID efi_dns6_protocol_guid;
+extern EFI_GUID efi_dns6_service_binding_protocol_guid;
 extern EFI_GUID efi_driver_binding_protocol_guid;
 extern EFI_GUID efi_graphics_output_protocol_guid;
 extern EFI_GUID efi_hii_config_access_protocol_guid;
 extern EFI_GUID efi_hii_font_protocol_guid;
+extern EFI_GUID efi_http_protocol_guid;
+extern EFI_GUID efi_http_service_binding_protocol_guid;
 extern EFI_GUID efi_ip4_protocol_guid;
 extern EFI_GUID efi_ip4_config_protocol_guid;
+extern EFI_GUID efi_ip4_config2_protocol_guid;
 extern EFI_GUID efi_ip4_service_binding_protocol_guid;
+extern EFI_GUID efi_ip6_protocol_guid;
+extern EFI_GUID efi_ip6_config_protocol_guid;
+extern EFI_GUID efi_ip6_service_binding_protocol_guid;
 extern EFI_GUID efi_load_file_protocol_guid;
 extern EFI_GUID efi_load_file2_protocol_guid;
 extern EFI_GUID efi_loaded_image_protocol_guid;
@@ -191,6 +212,8 @@ extern EFI_GUID efi_managed_network_protocol_guid;
 extern EFI_GUID efi_managed_network_service_binding_protocol_guid;
 extern EFI_GUID efi_mtftp4_protocol_guid;
 extern EFI_GUID efi_mtftp4_service_binding_protocol_guid;
+extern EFI_GUID efi_mtftp6_protocol_guid;
+extern EFI_GUID efi_mtftp6_service_binding_protocol_guid;
 extern EFI_GUID efi_nii_protocol_guid;
 extern EFI_GUID efi_nii31_protocol_guid;
 extern EFI_GUID efi_pci_io_protocol_guid;
@@ -207,9 +230,13 @@ extern EFI_GUID efi_simple_text_output_protocol_guid;
 extern EFI_GUID efi_tcg_protocol_guid;
 extern EFI_GUID efi_tcp4_protocol_guid;
 extern EFI_GUID efi_tcp4_service_binding_protocol_guid;
+extern EFI_GUID efi_tcp6_protocol_guid;
+extern EFI_GUID efi_tcp6_service_binding_protocol_guid;
 extern EFI_GUID efi_tree_protocol_guid;
 extern EFI_GUID efi_udp4_protocol_guid;
 extern EFI_GUID efi_udp4_service_binding_protocol_guid;
+extern EFI_GUID efi_udp6_protocol_guid;
+extern EFI_GUID efi_udp6_service_binding_protocol_guid;
 extern EFI_GUID efi_uga_draw_protocol_guid;
 extern EFI_GUID efi_unicode_collation_protocol_guid;
 extern EFI_GUID efi_usb_hc_protocol_guid;
@@ -242,6 +269,7 @@ efi_handle_name ( EFI_HANDLE handle );
 extern void dbg_efi_opener ( EFI_HANDLE handle, EFI_GUID *protocol,
 			     EFI_OPEN_PROTOCOL_INFORMATION_ENTRY *opener );
 extern void dbg_efi_openers ( EFI_HANDLE handle, EFI_GUID *protocol );
+extern void dbg_efi_protocol ( EFI_HANDLE handle, EFI_GUID *protocol );
 extern void dbg_efi_protocols ( EFI_HANDLE handle );
 
 #define DBG_EFI_OPENER_IF( level, handle, protocol,		\
@@ -276,6 +304,12 @@ extern void dbg_efi_protocols ( EFI_HANDLE handle );
 		DBG_DC_IF ( level );				\
 	} while ( 0 )
 
+#define DBGC_EFI_PROTOCOL_IF( level, id, ... ) do {		\
+		DBG_AC_IF ( level, id );			\
+		DBG_EFI_PROTOCOL_IF ( level, __VA_ARGS__ );	\
+		DBG_DC_IF ( level );				\
+	} while ( 0 )
+
 #define DBGC_EFI_PROTOCOLS_IF( level, id, ... ) do {		\
 		DBG_AC_IF ( level, id );			\
 		DBG_EFI_PROTOCOLS_IF ( level, __VA_ARGS__ );	\
@@ -286,6 +320,8 @@ extern void dbg_efi_protocols ( EFI_HANDLE handle );
 	DBGC_EFI_OPENER_IF ( LOG, ##__VA_ARGS__ )
 #define DBGC_EFI_OPENERS( ... )					\
 	DBGC_EFI_OPENERS_IF ( LOG, ##__VA_ARGS__ )
+#define DBGC_EFI_PROTOCOL( ... )				\
+	DBGC_EFI_PROTOCOL_IF ( LOG, ##__VA_ARGS__ )
 #define DBGC_EFI_PROTOCOLS( ... )				\
 	DBGC_EFI_PROTOCOLS_IF ( LOG, ##__VA_ARGS__ )
 
@@ -293,6 +329,8 @@ extern void dbg_efi_protocols ( EFI_HANDLE handle );
 	DBGC_EFI_OPENER_IF ( EXTRA, ##__VA_ARGS__ )
 #define DBGC2_EFI_OPENERS( ... )				\
 	DBGC_EFI_OPENERS_IF ( EXTRA, ##__VA_ARGS__ )
+#define DBGC2_EFI_PROTOCOL( ... )				\
+	DBGC_EFI_PROTOCOL_IF ( EXTRA, ##__VA_ARGS__ )
 #define DBGC2_EFI_PROTOCOLS( ... )				\
 	DBGC_EFI_PROTOCOLS_IF ( EXTRA, ##__VA_ARGS__ )
 
@@ -300,6 +338,8 @@ extern void dbg_efi_protocols ( EFI_HANDLE handle );
 	DBGC_EFI_OPENER_IF ( PROFILE, ##__VA_ARGS__ )
 #define DBGCP_EFI_OPENERS( ... )				\
 	DBGC_EFI_OPENERS_IF ( PROFILE, ##__VA_ARGS__ )
+#define DBGCP_EFI_PROTOCOL( ... )				\
+	DBGC_EFI_PROTOCOL_IF ( PROFILE, ##__VA_ARGS__ )
 #define DBGCP_EFI_PROTOCOLS( ... )				\
 	DBGC_EFI_PROTOCOLS_IF ( PROFILE, ##__VA_ARGS__ )
 
