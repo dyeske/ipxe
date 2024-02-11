@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 Michael Brown <mbrown@fensystems.co.uk>.
+ * Copyright (C) 2024 Michael Brown <mbrown@fensystems.co.uk>.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -24,22 +24,22 @@
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <byteswap.h>
-#include <ipxe/rsa.h>
-#include <ipxe/aes.h>
-#include <ipxe/sha512.h>
+#include <ipxe/x25519.h>
+#include <ipxe/asn1.h>
 #include <ipxe/tls.h>
 
-/** TLS_RSA_WITH_AES_256_GCM_SHA384 cipher suite */
-struct tls_cipher_suite
-tls_rsa_with_aes_256_gcm_sha384 __tls_cipher_suite ( 22 ) = {
-	.code = htons ( TLS_RSA_WITH_AES_256_GCM_SHA384 ),
-	.key_len = ( 256 / 8 ),
-	.fixed_iv_len = 4,
-	.record_iv_len = 8,
-	.mac_len = 0,
-	.exchange = &tls_pubkey_exchange_algorithm,
-	.pubkey = &rsa_algorithm,
-	.cipher = &aes_gcm_algorithm,
-	.digest = &sha384_algorithm,
-	.handshake = &sha384_algorithm,
+/** "x25519" object identifier */
+static uint8_t oid_x25519[] = { ASN1_OID_X25519 };
+
+/** "x25519" OID-identified algorithm */
+struct asn1_algorithm x25519_algorithm __asn1_algorithm = {
+	.name = "x25519",
+	.curve = &x25519_curve,
+	.oid = ASN1_CURSOR ( oid_x25519 ),
+};
+
+/** X25519 named curve */
+struct tls_named_curve tls_x25519_named_curve __tls_named_curve ( 01 ) = {
+	.curve = &x25519_curve,
+	.code = htons ( TLS_NAMED_CURVE_X25519 ),
 };

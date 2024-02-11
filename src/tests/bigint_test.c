@@ -149,6 +149,26 @@ void bigint_shrink_sample ( const bigint_element_t *source0,
 	bigint_shrink ( source, dest );
 }
 
+void bigint_copy_sample ( const bigint_element_t *source0,
+			  bigint_element_t *dest0, unsigned int size ) {
+	const bigint_t ( size ) *source __attribute__ (( may_alias ))
+		= ( ( const void * ) source0 );
+	bigint_t ( size ) *dest __attribute__ (( may_alias ))
+		= ( ( void * ) dest0 );
+
+	bigint_copy ( source, dest );
+}
+
+void bigint_swap_sample ( bigint_element_t *first0, bigint_element_t *second0,
+			  unsigned int size, int swap ) {
+	bigint_t ( size ) *first __attribute__ (( may_alias ))
+		= ( ( void * ) first0 );
+	bigint_t ( size ) *second __attribute__ (( may_alias ))
+		= ( ( void * ) second0 );
+
+	bigint_swap ( first, second, swap );
+}
+
 void bigint_multiply_sample ( const bigint_element_t *multiplicand0,
 			      unsigned int multiplicand_size,
 			      const bigint_element_t *multiplier0,
@@ -421,6 +441,42 @@ void bigint_mod_exp_sample ( const bigint_element_t *base0,
 	} while ( 0 )
 
 /**
+ * Report result of big integer swap test
+ *
+ * @v first		Big integer to be conditionally swapped
+ * @v second		Big integer to be conditionally swapped
+ */
+#define bigint_swap_ok( first, second ) do {				\
+	static const uint8_t first_raw[] = first;			\
+	static const uint8_t second_raw[] = second;			\
+	uint8_t temp[ sizeof ( first_raw ) ];				\
+	unsigned int size = bigint_required_size ( sizeof ( temp) );	\
+	bigint_t ( size ) first_temp;					\
+	bigint_t ( size ) second_temp;					\
+	{} /* Fix emacs alignment */					\
+									\
+	assert ( sizeof ( first_raw ) == sizeof ( temp ) );		\
+	assert ( sizeof ( second_raw ) == sizeof ( temp ) );		\
+	bigint_init ( &first_temp, first_raw, sizeof ( first_raw ) );	\
+	bigint_init ( &second_temp, second_raw, sizeof ( second_raw ) );\
+	bigint_swap ( &first_temp, &second_temp, 0 );			\
+	bigint_done ( &first_temp, temp, sizeof ( temp ) );		\
+	ok ( memcmp ( temp, first_raw, sizeof ( temp ) ) == 0 );	\
+	bigint_done ( &second_temp, temp, sizeof ( temp ) );		\
+	ok ( memcmp ( temp, second_raw, sizeof ( temp ) ) == 0 );	\
+	bigint_swap ( &first_temp, &second_temp, 1 );			\
+	bigint_done ( &first_temp, temp, sizeof ( temp ) );		\
+	ok ( memcmp ( temp, second_raw, sizeof ( temp ) ) == 0 );	\
+	bigint_done ( &second_temp, temp, sizeof ( temp ) );		\
+	ok ( memcmp ( temp, first_raw, sizeof ( temp ) ) == 0 );	\
+	bigint_swap ( &first_temp, &second_temp, 1 );			\
+	bigint_done ( &first_temp, temp, sizeof ( temp ) );		\
+	ok ( memcmp ( temp, first_raw, sizeof ( temp ) ) == 0 );	\
+	bigint_done ( &second_temp, temp, sizeof ( temp ) );		\
+	ok ( memcmp ( temp, second_raw, sizeof ( temp ) ) == 0 );	\
+	} while ( 0 )
+
+/**
  * Report result of big integer multiplication test
  *
  * @v multiplicand	Big integer to be multiplied
@@ -658,6 +714,15 @@ static void bigint_test_exec ( void ) {
 	bigint_subtract_ok ( BIGINT ( 0xbb, 0x77, 0x32, 0x5a ),
 			     BIGINT ( 0x5a, 0xd5, 0xfe, 0x28 ),
 			     BIGINT ( 0x9f, 0x5e, 0xcb, 0xce ) );
+	bigint_subtract_ok ( BIGINT ( 0x00, 0x00, 0xff, 0xff, 0xff, 0xff,
+				      0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+				      0xff, 0xff, 0xff, 0xff, 0xff, 0xff ),
+			     BIGINT ( 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				      0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				      0x00, 0x00, 0x00, 0x00, 0x00, 0x2a ),
+			     BIGINT ( 0xff, 0xff, 0x00, 0x00, 0x00, 0x00,
+				      0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				      0x00, 0x00, 0x00, 0x00, 0x00, 0x2b ) );
 	bigint_subtract_ok ( BIGINT ( 0x7b, 0xaa, 0x16, 0xcf, 0x15, 0x87,
 				      0xe0, 0x4f, 0x2c, 0xa3, 0xec, 0x2f,
 				      0x46, 0xfb, 0x83, 0xc6, 0xe0, 0xee,
@@ -1363,6 +1428,14 @@ static void bigint_test_exec ( void ) {
 					 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
 					 0xff, 0xff ),
 				1024 );
+	bigint_swap_ok ( BIGINT ( 0x68, 0x65, 0x6c, 0x6c, 0x6f ),
+			 BIGINT ( 0x77, 0x6f, 0x72, 0x6c, 0x64 ) );
+	bigint_swap_ok ( BIGINT ( 0xc8, 0x1c, 0x31, 0xd7, 0x13, 0x69, 0x47,
+				  0x32, 0xb0, 0x0a, 0xf7, 0x2d, 0xb9, 0xc3,
+				  0x35, 0x96 ),
+			 BIGINT ( 0x8b, 0x1d, 0x8f, 0x21, 0x76, 0x16, 0x4c,
+				  0xf8, 0xb2, 0x63, 0xed, 0x89, 0x5e, 0x6b,
+				  0x35, 0x7c ) );
 	bigint_multiply_ok ( BIGINT ( 0xf0 ),
 			     BIGINT ( 0xeb ),
 			     BIGINT ( 0xdc, 0x50 ) );
