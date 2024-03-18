@@ -28,8 +28,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #include <string.h>
 #include <byteswap.h>
 #include <ipxe/netdevice.h>
-#include <ipxe/md5.h>
-#include <ipxe/chap.h>
 #include <ipxe/eap.h>
 
 /** @file
@@ -46,8 +44,8 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
  * @v rsp_len		Length of response type data
  * @ret rc		Return status code
  */
-static int eap_tx_response ( struct eap_supplicant *supplicant,
-			     const void *rsp, size_t rsp_len ) {
+int eap_tx_response ( struct eap_supplicant *supplicant,
+		      const void *rsp, size_t rsp_len ) {
 	struct net_device *netdev = supplicant->netdev;
 	struct eap_message *msg;
 	size_t len;
@@ -65,6 +63,8 @@ static int eap_tx_response ( struct eap_supplicant *supplicant,
 	msg->hdr.len = htons ( len );
 	msg->type = supplicant->type;
 	memcpy ( msg->data, rsp, rsp_len );
+	DBGC ( netdev, "EAP %s Response id %#02x type %d\n",
+	       netdev->name, msg->hdr.id, msg->type );
 
 	/* Transmit response */
 	if ( ( rc = supplicant->tx ( supplicant, msg, len ) ) != 0 ) {
@@ -86,18 +86,24 @@ static int eap_tx_response ( struct eap_supplicant *supplicant,
  * @ret rc		Return status code
  */
 static int eap_tx_nak ( struct eap_supplicant *supplicant ) {
+	struct net_device *netdev = supplicant->netdev;
 	unsigned int max = table_num_entries ( EAP_METHODS );
 	uint8_t methods[ max + 1 /* potential EAP_TYPE_NONE */ ];
 	unsigned int count = 0;
 	struct eap_method *method;
 
 	/* Populate methods list */
+	DBGC ( netdev, "EAP %s Nak offering types {", netdev->name );
 	for_each_table_entry ( method, EAP_METHODS ) {
-		if ( method->type > EAP_TYPE_NAK )
+		if ( method->type > EAP_TYPE_NAK ) {
+			DBGC ( netdev, "%s%d",
+			       ( count ? ", " : "" ), method->type );
 			methods[count++] = method->type;
+		}
 	}
 	if ( ! count )
 		methods[count++] = EAP_TYPE_NONE;
+	DBGC ( netdev, "}\n" );
 	assert ( count <= max );
 
 	/* Transmit response */
@@ -160,84 +166,6 @@ struct eap_method eap_identity_method __eap_method = {
 };
 
 /**
- * Handle EAP MD5-Challenge
- *
- * @v req		Request type data
- * @v req_len		Length of request type data
- * @ret rc		Return status code
- */
-static int eap_rx_md5 ( struct eap_supplicant *supplicant,
-			const void *req, size_t req_len ) {
-	struct net_device *netdev = supplicant->netdev;
-	const struct eap_md5 *md5req = req;
-	struct {
-		uint8_t len;
-		uint8_t value[MD5_DIGEST_SIZE];
-	} __attribute__ (( packed )) md5rsp;
-	struct chap_response chap;
-	void *secret;
-	int secret_len;
-	int rc;
-
-	/* Sanity checks */
-	if ( req_len < sizeof ( *md5req ) ) {
-		DBGC ( netdev, "EAP %s underlength MD5-Challenge:\n",
-		       netdev->name );
-		DBGC_HDA ( netdev, 0, req, req_len );
-		rc = -EINVAL;
-		goto err_sanity;
-	}
-	if ( ( req_len - sizeof ( *md5req ) ) < md5req->len ) {
-		DBGC ( netdev, "EAP %s truncated MD5-Challenge:\n",
-		       netdev->name );
-		DBGC_HDA ( netdev, 0, req, req_len );
-		rc = -EINVAL;
-		goto err_sanity;
-	}
-
-	/* Construct response */
-	if ( ( rc = chap_init ( &chap, &md5_algorithm ) ) != 0 ) {
-		DBGC ( netdev, "EAP %s could not initialise CHAP: %s\n",
-		       netdev->name, strerror ( rc ) );
-		goto err_chap;
-	}
-	chap_set_identifier ( &chap, supplicant->id );
-	secret_len = fetch_raw_setting_copy ( netdev_settings ( netdev ),
-					      &password_setting, &secret );
-	if ( secret_len < 0 ) {
-		rc = secret_len;
-		DBGC ( netdev, "EAP %s has no secret: %s\n",
-		       netdev->name, strerror ( rc ) );
-		goto err_secret;
-	}
-	chap_update ( &chap, secret, secret_len );
-	chap_update ( &chap, md5req->value, md5req->len );
-	chap_respond ( &chap );
-	assert ( chap.response_len == sizeof ( md5rsp.value ) );
-	md5rsp.len = sizeof ( md5rsp.value );
-	memcpy ( md5rsp.value, chap.response, sizeof ( md5rsp.value ) );
-
-	/* Transmit response */
-	if ( ( rc = eap_tx_response ( supplicant, &md5rsp,
-				      sizeof ( md5rsp ) ) ) != 0 )
-		goto err_tx;
-
- err_tx:
-	free ( secret );
- err_secret:
-	chap_finish ( &chap );
- err_chap:
- err_sanity:
-	return rc;
-}
-
-/** EAP MD5-Challenge method */
-struct eap_method eap_md5_method __eap_method = {
-	.type = EAP_TYPE_MD5,
-	.rx = eap_rx_md5,
-};
-
-/**
  * Handle EAP Request
  *
  * @v supplicant	EAP supplicant
@@ -269,6 +197,8 @@ static int eap_rx_request ( struct eap_supplicant *supplicant,
 	/* Record request details */
 	supplicant->id = msg->hdr.id;
 	supplicant->type = msg->type;
+	DBGC ( netdev, "EAP %s Request id %#02x type %d\n",
+	       netdev->name, msg->hdr.id, msg->type );
 
 	/* Handle according to type */
 	for_each_table_entry ( method, EAP_METHODS ) {
@@ -360,3 +290,9 @@ int eap_rx ( struct eap_supplicant *supplicant, const void *data,
 		return -ENOTSUP;
 	}
 }
+
+/* Drag in objects via eap_rx() */
+REQUIRING_SYMBOL ( eap_rx );
+
+/* Drag in EAP configuration */
+REQUIRE_OBJECT ( config_eap );
