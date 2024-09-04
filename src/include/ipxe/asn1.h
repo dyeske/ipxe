@@ -309,6 +309,19 @@ struct asn1_builder_header {
 	ASN1_OID_TRIPLE ( 113549 ), ASN1_OID_SINGLE ( 1 ),	\
 	ASN1_OID_SINGLE ( 7 ), ASN1_OID_SINGLE ( 2 )
 
+/** ASN.1 OID for id-envelopedData (1.2.840.113549.1.7.3) */
+#define ASN1_OID_ENVELOPEDDATA					\
+	ASN1_OID_INITIAL ( 1, 2 ), ASN1_OID_DOUBLE ( 840 ),	\
+	ASN1_OID_TRIPLE ( 113549 ), ASN1_OID_SINGLE ( 1 ),	\
+	ASN1_OID_SINGLE ( 7 ), ASN1_OID_SINGLE ( 3 )
+
+/** ASN.1 OID for id-authEnvelopedData (1.2.840.113549.1.9.16.1.23) */
+#define ASN1_OID_AUTHENVELOPEDDATA					\
+	ASN1_OID_INITIAL ( 1, 2 ), ASN1_OID_DOUBLE ( 840 ),	\
+	ASN1_OID_TRIPLE ( 113549 ), ASN1_OID_SINGLE ( 1 ),	\
+	ASN1_OID_SINGLE ( 9 ), ASN1_OID_SINGLE ( 16 ),		\
+	ASN1_OID_SINGLE ( 1 ), ASN1_OID_SINGLE ( 23 )
+
 /** ASN.1 OID for id-pe-authorityInfoAccess (1.3.6.1.5.5.7.1.1) */
 #define ASN1_OID_AUTHORITYINFOACCESS				\
 	ASN1_OID_INITIAL ( 1, 3 ), ASN1_OID_SINGLE ( 6 ),	\
@@ -363,6 +376,15 @@ struct asn1_algorithm {
 	struct cipher_algorithm *cipher;
 	/** Elliptic curve (if applicable) */
 	struct elliptic_curve *curve;
+	/**
+	 * Parse algorithm parameters (optional)
+	 *
+	 * @v algorithm		Algorithm
+	 * @v param		Parameters to parse (and potentially modify)
+	 * @ret rc		Return status code
+	 */
+	int ( * parse ) ( struct asn1_algorithm *algorithm,
+			  struct asn1_cursor *params );
 };
 
 /** ASN.1 OID-identified algorithms */
@@ -467,17 +489,23 @@ extern int asn1_integral_bit_string ( const struct asn1_cursor *cursor,
 extern int asn1_compare ( const struct asn1_cursor *cursor1,
 			  const struct asn1_cursor *cursor2 );
 extern int asn1_algorithm ( const struct asn1_cursor *cursor,
-			    struct asn1_algorithm **algorithm );
+			    struct asn1_algorithm **algorithm,
+			    struct asn1_cursor *params );
 extern int asn1_pubkey_algorithm ( const struct asn1_cursor *cursor,
 				   struct asn1_algorithm **algorithm );
 extern int asn1_digest_algorithm ( const struct asn1_cursor *cursor,
 				   struct asn1_algorithm **algorithm );
 extern int asn1_cipher_algorithm ( const struct asn1_cursor *cursor,
-				   struct asn1_algorithm **algorithm );
+				   struct asn1_algorithm **algorithm,
+				   struct asn1_cursor *params );
 extern int asn1_signature_algorithm ( const struct asn1_cursor *cursor,
 				      struct asn1_algorithm **algorithm );
 extern int asn1_check_algorithm ( const struct asn1_cursor *cursor,
 				  struct asn1_algorithm *expected );
+extern int asn1_parse_cbc ( struct asn1_algorithm *algorithm,
+			    struct asn1_cursor *params );
+extern int asn1_parse_gcm ( struct asn1_algorithm *algorithm,
+			    struct asn1_cursor *params );
 extern int asn1_generalized_time ( const struct asn1_cursor *cursor,
 				   time_t *time );
 extern int asn1_grow ( struct asn1_builder *builder, size_t extra );
