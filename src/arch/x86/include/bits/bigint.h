@@ -104,13 +104,13 @@ bigint_subtract_raw ( const uint32_t *subtrahend0, uint32_t *value0,
 }
 
 /**
- * Rotate big integer left
+ * Shift big integer left
  *
  * @v value0		Element 0 of big integer
  * @v size		Number of elements
  */
 static inline __attribute__ (( always_inline )) void
-bigint_rol_raw ( uint32_t *value0, unsigned int size ) {
+bigint_shl_raw ( uint32_t *value0, unsigned int size ) {
 	bigint_t ( size ) __attribute__ (( may_alias )) *value =
 		( ( void * ) value0 );
 	long index;
@@ -127,13 +127,13 @@ bigint_rol_raw ( uint32_t *value0, unsigned int size ) {
 }
 
 /**
- * Rotate big integer right
+ * Shift big integer right
  *
  * @v value0		Element 0 of big integer
  * @v size		Number of elements
  */
 static inline __attribute__ (( always_inline )) void
-bigint_ror_raw ( uint32_t *value0, unsigned int size ) {
+bigint_shr_raw ( uint32_t *value0, unsigned int size ) {
 	bigint_t ( size ) __attribute__ (( may_alias )) *value =
 		( ( void * ) value0 );
 	long discard_c;
@@ -193,25 +193,6 @@ bigint_is_geq_raw ( const uint32_t *value0, const uint32_t *reference0,
 			       : "r" ( value0 ), "r" ( reference0 ),
 				 "0" ( 0 ), "1" ( size ) );
 	return result;
-}
-
-/**
- * Test if bit is set in big integer
- *
- * @v value0		Element 0 of big integer
- * @v size		Number of elements
- * @v bit		Bit to test
- * @ret is_set		Bit is set
- */
-static inline __attribute__ (( always_inline )) int
-bigint_bit_is_set_raw ( const uint32_t *value0, unsigned int size,
-			unsigned int bit ) {
-	const bigint_t ( size ) __attribute__ (( may_alias )) *value =
-		( ( const void * ) value0 );
-	unsigned int index = ( bit / ( 8 * sizeof ( value->element[0] ) ) );
-	unsigned int subindex = ( bit % ( 8 * sizeof ( value->element[0] ) ) );
-
-	return ( value->element[index] & ( 1 << subindex ) );
 }
 
 /**
@@ -322,10 +303,33 @@ bigint_done_raw ( const uint32_t *value0, unsigned int size __unused,
 			       : "eax" );
 }
 
-extern void bigint_multiply_raw ( const uint32_t *multiplicand0,
-				  unsigned int multiplicand_size,
-				  const uint32_t *multiplier0,
-				  unsigned int multiplier_size,
-				  uint32_t *value0 );
+/**
+ * Multiply big integer elements
+ *
+ * @v multiplicand	Multiplicand element
+ * @v multiplier	Multiplier element
+ * @v result		Result element
+ * @v carry		Carry element
+ */
+static inline __attribute__ (( always_inline )) void
+bigint_multiply_one ( const uint32_t multiplicand, const uint32_t multiplier,
+		      uint32_t *result, uint32_t *carry ) {
+	uint32_t discard_a;
+
+	__asm__ __volatile__ ( /* Perform multiplication */
+			       "mull %3\n\t"
+			       /* Accumulate carry */
+			       "addl %5, %0\n\t"
+			       "adcl $0, %1\n\t"
+			       /* Accumulate result */
+			       "addl %0, %2\n\t"
+			       "adcl $0, %1\n\t"
+			       : "=&a" ( discard_a ),
+				 "=&d" ( *carry ),
+				 "+m" ( *result )
+			       : "g" ( multiplicand ),
+				 "0" ( multiplier ),
+				 "r" ( *carry ) );
+}
 
 #endif /* _BITS_BIGINT_H */

@@ -89,23 +89,23 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 	} while ( 0 )
 
 /**
- * Rotate big integer left
+ * Shift big integer left
  *
  * @v value		Big integer
  */
-#define bigint_rol( value ) do {					\
+#define bigint_shl( value ) do {					\
 	unsigned int size = bigint_size (value);			\
-	bigint_rol_raw ( (value)->element, size );			\
+	bigint_shl_raw ( (value)->element, size );			\
 	} while ( 0 )
 
 /**
- * Rotate big integer right
+ * Shift big integer right
  *
  * @v value		Big integer
  */
-#define bigint_ror( value ) do {					\
+#define bigint_shr( value ) do {					\
 	unsigned int size = bigint_size (value);			\
-	bigint_ror_raw ( (value)->element, size );			\
+	bigint_shr_raw ( (value)->element, size );			\
 	} while ( 0 )
 
 /**
@@ -218,6 +218,35 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 	} while ( 0 )
 
 /**
+ * Reduce big integer
+ *
+ * @v minuend		Big integer to be reduced
+ * @v modulus		Big integer modulus
+ * @v result		Big integer to hold result
+ * @v tmp		Temporary working space
+ */
+#define bigint_reduce( minuend, modulus, result, tmp ) do {		\
+	unsigned int minuend_size = bigint_size (minuend);		\
+	unsigned int modulus_size = bigint_size (modulus);		\
+	bigint_reduce_raw ( (minuend)->element, minuend_size,		\
+			    (modulus)->element, modulus_size,		\
+			    (result)->element, tmp );			\
+	} while ( 0 )
+
+/**
+ * Calculate temporary working space required for reduction
+ *
+ * @v minuend		Big integer to be reduced
+ * @ret len		Length of temporary working space
+ */
+#define bigint_reduce_tmp_len( minuend ) ( {				\
+	unsigned int size = bigint_size (minuend);			\
+	sizeof ( struct {						\
+		bigint_t ( size ) temp_minuend;				\
+		bigint_t ( size ) temp_modulus;				\
+	} ); } )
+
+/**
  * Perform modular multiplication of big integers
  *
  * @v multiplicand	Big integer to be multiplied
@@ -285,6 +314,25 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <bits/bigint.h>
 
+/**
+ * Test if bit is set in big integer
+ *
+ * @v value0		Element 0 of big integer
+ * @v size		Number of elements
+ * @v bit		Bit to test
+ * @ret is_set		Bit is set
+ */
+static inline __attribute__ (( always_inline )) int
+bigint_bit_is_set_raw ( const bigint_element_t *value0, unsigned int size,
+			unsigned int bit ) {
+	const bigint_t ( size ) __attribute__ (( may_alias )) *value =
+		( ( const void * ) value0 );
+	unsigned int index = ( bit / ( 8 * sizeof ( value->element[0] ) ) );
+	unsigned int subindex = ( bit % ( 8 * sizeof ( value->element[0] ) ) );
+
+	return ( !! ( value->element[index] & ( 1UL << subindex ) ) );
+}
+
 void bigint_init_raw ( bigint_element_t *value0, unsigned int size,
 		       const void *data, size_t len );
 void bigint_done_raw ( const bigint_element_t *value0, unsigned int size,
@@ -293,8 +341,8 @@ void bigint_add_raw ( const bigint_element_t *addend0,
 		      bigint_element_t *value0, unsigned int size );
 void bigint_subtract_raw ( const bigint_element_t *subtrahend0,
 			   bigint_element_t *value0, unsigned int size );
-void bigint_rol_raw ( bigint_element_t *value0, unsigned int size );
-void bigint_ror_raw ( bigint_element_t *value0, unsigned int size );
+void bigint_shl_raw ( bigint_element_t *value0, unsigned int size );
+void bigint_shr_raw ( bigint_element_t *value0, unsigned int size );
 int bigint_is_zero_raw ( const bigint_element_t *value0, unsigned int size );
 int bigint_is_geq_raw ( const bigint_element_t *value0,
 			const bigint_element_t *reference0,
@@ -311,11 +359,20 @@ void bigint_shrink_raw ( const bigint_element_t *source0,
 			 unsigned int dest_size );
 void bigint_swap_raw ( bigint_element_t *first0, bigint_element_t *second0,
 		       unsigned int size, int swap );
+void bigint_multiply_one ( const bigint_element_t multiplicand,
+			   const bigint_element_t multiplier,
+			   bigint_element_t *result,
+			   bigint_element_t *carry );
 void bigint_multiply_raw ( const bigint_element_t *multiplicand0,
 			   unsigned int multiplicand_size,
 			   const bigint_element_t *multiplier0,
 			   unsigned int multiplier_size,
 			   bigint_element_t *result0 );
+void bigint_reduce_raw ( const bigint_element_t *minuend0,
+			 unsigned int minuend_size,
+			 const bigint_element_t *modulus0,
+			 unsigned int modulus_size,
+			 bigint_element_t *result0, void *tmp );
 void bigint_mod_multiply_raw ( const bigint_element_t *multiplicand0,
 			       const bigint_element_t *multiplier0,
 			       const bigint_element_t *modulus0,
