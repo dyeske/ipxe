@@ -1,8 +1,10 @@
 /*
+ * Copyright (C) 2024 Michael Brown <mbrown@fensystems.co.uk>.
+ *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
  * published by the Free Software Foundation; either version 2 of the
- * License, or (at your option) any later version.
+ * License, or any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -21,53 +23,25 @@
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
-#include <config/usb.h>
-#include <config/settings.h>
-
-/** @file
+/**
+ * @file
  *
- * USB configuration options
+ * Null SMBIOS API
  *
  */
 
-PROVIDE_REQUIRING_SYMBOL();
+#include <errno.h>
+#include <ipxe/smbios.h>
 
-/*
- * Drag in USB controllers
+/**
+ * Find SMBIOS
+ *
+ * @v smbios		SMBIOS entry point descriptor structure to fill in
+ * @ret rc		Return status code
  */
-#ifdef USB_HCD_XHCI
-REQUIRE_OBJECT ( xhci );
-#endif
-#ifdef USB_HCD_EHCI
-REQUIRE_OBJECT ( ehci );
-#endif
-#ifdef USB_HCD_UHCI
-REQUIRE_OBJECT ( uhci );
-#endif
-#ifdef USB_HCD_USBIO
-REQUIRE_OBJECT ( usbio );
-#endif
+static int null_find_smbios ( struct smbios *smbios __unused ) {
 
-/*
- * Drag in USB peripherals
- */
-#ifdef USB_KEYBOARD
-REQUIRE_OBJECT ( usbkbd );
-#endif
-#ifdef USB_BLOCK
-REQUIRE_OBJECT ( usbblk );
-#endif
+	return -ENOTSUP;
+}
 
-/*
- * Drag in USB external interfaces
- */
-#ifdef USB_EFI
-REQUIRE_OBJECT ( efi_usb );
-#endif
-
-/*
- * Drag in USB settings mechanism
- */
-#ifdef USB_SETTINGS
-REQUIRE_OBJECT ( usb_settings );
-#endif
+PROVIDE_SMBIOS ( null, find_smbios, null_find_smbios );

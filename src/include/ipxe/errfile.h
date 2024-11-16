@@ -83,6 +83,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #define ERRFILE_efi_path	       ( ERRFILE_CORE | 0x002b0000 )
 #define ERRFILE_efi_mp		       ( ERRFILE_CORE | 0x002c0000 )
 #define ERRFILE_efi_service	       ( ERRFILE_CORE | 0x002d0000 )
+#define ERRFILE_null_smbios	       ( ERRFILE_CORE | 0x002e0000 )
 
 #define ERRFILE_eisa		     ( ERRFILE_DRIVER | 0x00000000 )
 #define ERRFILE_isa		     ( ERRFILE_DRIVER | 0x00010000 )
@@ -423,6 +424,8 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #define ERRFILE_editstring	      ( ERRFILE_OTHER | 0x00610000 )
 #define ERRFILE_widget_ui	      ( ERRFILE_OTHER | 0x00620000 )
 #define ERRFILE_form_ui		      ( ERRFILE_OTHER | 0x00630000 )
+#define ERRFILE_usb_cmd		      ( ERRFILE_OTHER | 0x00640000 )
+#define ERRFILE_usb_settings	      ( ERRFILE_OTHER | 0x00650000 )
 
 /** @} */
 

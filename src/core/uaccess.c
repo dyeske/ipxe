@@ -1,8 +1,10 @@
 /*
+ * Copyright (C) 2024 Michael Brown <mbrown@fensystems.co.uk>.
+ *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
  * published by the Free Software Foundation; either version 2 of the
- * License, or (at your option) any later version.
+ * License, or any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -21,53 +23,22 @@
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
-#include <config/usb.h>
-#include <config/settings.h>
+#include <ipxe/uaccess.h>
 
 /** @file
  *
- * USB configuration options
+ * iPXE user access API
  *
  */
 
-PROVIDE_REQUIRING_SYMBOL();
-
-/*
- * Drag in USB controllers
- */
-#ifdef USB_HCD_XHCI
-REQUIRE_OBJECT ( xhci );
-#endif
-#ifdef USB_HCD_EHCI
-REQUIRE_OBJECT ( ehci );
-#endif
-#ifdef USB_HCD_UHCI
-REQUIRE_OBJECT ( uhci );
-#endif
-#ifdef USB_HCD_USBIO
-REQUIRE_OBJECT ( usbio );
-#endif
-
-/*
- * Drag in USB peripherals
- */
-#ifdef USB_KEYBOARD
-REQUIRE_OBJECT ( usbkbd );
-#endif
-#ifdef USB_BLOCK
-REQUIRE_OBJECT ( usbblk );
-#endif
-
-/*
- * Drag in USB external interfaces
- */
-#ifdef USB_EFI
-REQUIRE_OBJECT ( efi_usb );
-#endif
-
-/*
- * Drag in USB settings mechanism
- */
-#ifdef USB_SETTINGS
-REQUIRE_OBJECT ( usb_settings );
-#endif
+/* Flat address space user access API */
+PROVIDE_UACCESS_INLINE ( flat, phys_to_user );
+PROVIDE_UACCESS_INLINE ( flat, user_to_phys );
+PROVIDE_UACCESS_INLINE ( flat, virt_to_user );
+PROVIDE_UACCESS_INLINE ( flat, user_to_virt );
+PROVIDE_UACCESS_INLINE ( flat, userptr_add );
+PROVIDE_UACCESS_INLINE ( flat, memcpy_user );
+PROVIDE_UACCESS_INLINE ( flat, memmove_user );
+PROVIDE_UACCESS_INLINE ( flat, memset_user );
+PROVIDE_UACCESS_INLINE ( flat, strlen_user );
+PROVIDE_UACCESS_INLINE ( flat, memchr_user );

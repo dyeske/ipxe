@@ -21,53 +21,16 @@
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
-#include <config/usb.h>
 #include <config/settings.h>
 
 /** @file
  *
- * USB configuration options
+ * PCI configuration options
  *
  */
 
 PROVIDE_REQUIRING_SYMBOL();
 
-/*
- * Drag in USB controllers
- */
-#ifdef USB_HCD_XHCI
-REQUIRE_OBJECT ( xhci );
-#endif
-#ifdef USB_HCD_EHCI
-REQUIRE_OBJECT ( ehci );
-#endif
-#ifdef USB_HCD_UHCI
-REQUIRE_OBJECT ( uhci );
-#endif
-#ifdef USB_HCD_USBIO
-REQUIRE_OBJECT ( usbio );
-#endif
-
-/*
- * Drag in USB peripherals
- */
-#ifdef USB_KEYBOARD
-REQUIRE_OBJECT ( usbkbd );
-#endif
-#ifdef USB_BLOCK
-REQUIRE_OBJECT ( usbblk );
-#endif
-
-/*
- * Drag in USB external interfaces
- */
-#ifdef USB_EFI
-REQUIRE_OBJECT ( efi_usb );
-#endif
-
-/*
- * Drag in USB settings mechanism
- */
-#ifdef USB_SETTINGS
-REQUIRE_OBJECT ( usb_settings );
+#ifdef PCI_SETTINGS
+REQUIRE_OBJECT ( pci_settings );
 #endif

@@ -78,6 +78,9 @@ REQUIRE_OBJECT ( vmconsole );
 #ifdef CONSOLE_DEBUGCON
 REQUIRE_OBJECT ( debugcon );
 #endif
+#ifdef CONSOLE_SBI
+REQUIRE_OBJECT ( sbi_console );
+#endif
 
 /*
  * Drag in all requested network protocols
@@ -302,6 +305,9 @@ REQUIRE_OBJECT ( shim_cmd );
 #ifdef IMAGE_CRYPT_CMD
 REQUIRE_OBJECT ( image_crypt_cmd );
 #endif
+#ifdef USB_CMD
+REQUIRE_OBJECT ( usb_cmd );
+#endif
 
 /*
  * Drag in miscellaneous objects
@@ -346,9 +352,6 @@ REQUIRE_OBJECT ( efi_bofm );
 /*
  * Drag in relevant settings sources
  */
-#ifdef PCI_SETTINGS
-REQUIRE_OBJECT ( pci_settings );
-#endif
 #ifdef VMWARE_SETTINGS
 REQUIRE_OBJECT ( guestinfo );
 #endif

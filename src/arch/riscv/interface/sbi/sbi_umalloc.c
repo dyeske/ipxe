@@ -1,8 +1,10 @@
 /*
+ * Copyright (C) 2024 Michael Brown <mbrown@fensystems.co.uk>.
+ *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
  * published by the Free Software Foundation; either version 2 of the
- * License, or (at your option) any later version.
+ * License, or any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -21,53 +23,32 @@
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
-#include <config/usb.h>
-#include <config/settings.h>
+#include <stdlib.h>
+#include <ipxe/umalloc.h>
 
 /** @file
  *
- * USB configuration options
+ * iPXE user memory allocation API for SBI
  *
  */
 
-PROVIDE_REQUIRING_SYMBOL();
+/** Equivalent of NOWHERE for user pointers */
+#define UNOWHERE ( ~UNULL )
 
-/*
- * Drag in USB controllers
+/**
+ * Reallocate external memory
+ *
+ * @v old_ptr		Memory previously allocated by umalloc(), or UNULL
+ * @v new_size		Requested size
+ * @ret new_ptr		Allocated memory, or UNULL
+ *
+ * Calling realloc() with a new size of zero is a valid way to free a
+ * memory block.
  */
-#ifdef USB_HCD_XHCI
-REQUIRE_OBJECT ( xhci );
-#endif
-#ifdef USB_HCD_EHCI
-REQUIRE_OBJECT ( ehci );
-#endif
-#ifdef USB_HCD_UHCI
-REQUIRE_OBJECT ( uhci );
-#endif
-#ifdef USB_HCD_USBIO
-REQUIRE_OBJECT ( usbio );
-#endif
+static userptr_t sbi_urealloc ( userptr_t old_ptr, size_t new_size ) {
 
-/*
- * Drag in USB peripherals
- */
-#ifdef USB_KEYBOARD
-REQUIRE_OBJECT ( usbkbd );
-#endif
-#ifdef USB_BLOCK
-REQUIRE_OBJECT ( usbblk );
-#endif
+	/* External allocation not yet implemented: allocate from heap */
+	return ( ( userptr_t ) realloc ( ( ( void * ) old_ptr ), new_size ) );
+}
 
-/*
- * Drag in USB external interfaces
- */
-#ifdef USB_EFI
-REQUIRE_OBJECT ( efi_usb );
-#endif
-
-/*
- * Drag in USB settings mechanism
- */
-#ifdef USB_SETTINGS
-REQUIRE_OBJECT ( usb_settings );
-#endif
+PROVIDE_UMALLOC ( sbi, urealloc, sbi_urealloc );
