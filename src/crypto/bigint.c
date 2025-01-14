@@ -38,10 +38,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 static struct profiler bigint_mod_profiler __profiler =
 	{ .name = "bigint_mod" };
 
-/** Modular multiplication overall profiler */
-static struct profiler bigint_mod_multiply_profiler __profiler =
-	{ .name = "bigint_mod_multiply" };
-
 /**
  * Conditionally swap big integers (in constant time)
  *
@@ -139,67 +135,46 @@ void bigint_multiply_raw ( const bigint_element_t *multiplicand0,
 /**
  * Reduce big integer
  *
- * @v minuend0		Element 0 of big integer to be reduced
- * @v minuend_size	Number of elements in minuend
  * @v modulus0		Element 0 of big integer modulus
- * @v modulus_size	Number of elements in modulus and result
- * @v result0		Element 0 of big integer to hold result
- * @v tmp		Temporary working space
+ * @v value0		Element 0 of big integer to be reduced
+ * @v size		Number of elements in modulus and value
  */
-void bigint_reduce_raw ( const bigint_element_t *minuend0,
-			 unsigned int minuend_size,
-			 const bigint_element_t *modulus0,
-			 unsigned int modulus_size,
-			 bigint_element_t *result0, void *tmp ) {
-	const bigint_t ( minuend_size ) __attribute__ (( may_alias ))
-		*minuend = ( ( const void * ) minuend0 );
-	const bigint_t ( modulus_size ) __attribute__ (( may_alias ))
-		*modulus = ( ( const void * ) modulus0 );
-	bigint_t ( modulus_size ) __attribute__ (( may_alias ))
-		*result = ( ( void * ) result0 );
-	struct {
-		bigint_t ( minuend_size ) minuend;
-		bigint_t ( minuend_size ) modulus;
-	} *temp = tmp;
+void bigint_reduce_raw ( bigint_element_t *modulus0, bigint_element_t *value0,
+			 unsigned int size ) {
+	bigint_t ( size ) __attribute__ (( may_alias ))
+		*modulus = ( ( void * ) modulus0 );
+	bigint_t ( size ) __attribute__ (( may_alias ))
+		*value = ( ( void * ) value0 );
 	const unsigned int width = ( 8 * sizeof ( bigint_element_t ) );
-	const bigint_element_t msb_mask = ( 1UL << ( width - 1 ) );
 	bigint_element_t *element;
-	unsigned int minuend_max;
 	unsigned int modulus_max;
+	unsigned int value_max;
 	unsigned int subshift;
-	bigint_element_t msb;
 	int offset;
 	int shift;
+	int msb;
 	int i;
 
 	/* Start profiling */
 	profile_start ( &bigint_mod_profiler );
 
-	/* Sanity check */
-	assert ( minuend_size >= modulus_size );
-	assert ( sizeof ( *temp ) == bigint_reduce_tmp_len ( minuend ) );
-
-	/* Copy minuend and modulus to temporary working space */
-	bigint_shrink ( minuend, &temp->minuend );
-	bigint_grow ( modulus, &temp->modulus );
-
 	/* Normalise the modulus
 	 *
 	 * Scale the modulus by shifting left such that both modulus
-	 * "m" and minuend "x" have the same most significant set bit.
-	 * (If this is not possible, then the minuend is already less
+	 * "m" and value "x" have the same most significant set bit.
+	 * (If this is not possible, then the value is already less
 	 * than the modulus, and we may therefore skip reduction
 	 * completely.)
 	 */
-	minuend_max = bigint_max_set_bit ( minuend );
+	value_max = bigint_max_set_bit ( value );
 	modulus_max = bigint_max_set_bit ( modulus );
-	shift = ( minuend_max - modulus_max );
+	shift = ( value_max - modulus_max );
 	if ( shift < 0 )
 		goto skip;
 	subshift = ( shift & ( width - 1 ) );
 	offset = ( shift / width );
-	element = temp->modulus.element;
-	for ( i = ( ( minuend_max - 1 ) / width ) ; ; i-- ) {
+	element = modulus->element;
+	for ( i = ( ( value_max - 1 ) / width ) ; ; i-- ) {
 		element[i] = ( element[ i - offset ] << subshift );
 		if ( i <= offset )
 			break;
@@ -211,14 +186,14 @@ void bigint_reduce_raw ( const bigint_element_t *minuend0,
 	for ( i-- ; i >= 0 ; i-- )
 		element[i] = 0;
 
-	/* Reduce the minuend "x" by iteratively adding or subtracting
+	/* Reduce the value "x" by iteratively adding or subtracting
 	 * the scaled modulus "m".
 	 *
 	 * On each loop iteration, we maintain the invariant:
 	 *
 	 *    -2m <= x < 2m
 	 *
-	 * If x is positive, we obtain the new minuend x' by
+	 * If x is positive, we obtain the new value x' by
 	 * subtracting m, otherwise we add m:
 	 *
 	 *      0 <= x < 2m   =>   x' := x - m   =>   -m <= x' < m
@@ -285,24 +260,45 @@ void bigint_reduce_raw ( const bigint_element_t *minuend0,
 	 */
 	for ( msb = 0 ; ( msb || ( shift >= 0 ) ) ; shift-- ) {
 		if ( msb ) {
-			bigint_add ( &temp->modulus, &temp->minuend );
+			bigint_add ( modulus, value );
 		} else {
-			bigint_subtract ( &temp->modulus, &temp->minuend );
+			bigint_subtract ( modulus, value );
 		}
-		msb = ( temp->minuend.element[ minuend_size - 1 ] & msb_mask );
+		msb = bigint_msb_is_set ( value );
 		if ( shift > 0 )
-			bigint_shr ( &temp->modulus );
+			bigint_shr ( modulus );
 	}
 
  skip:
 	/* Sanity check */
-	assert ( ! bigint_is_geq ( &temp->minuend, &temp->modulus ) );
-
-	/* Copy result */
-	bigint_shrink ( &temp->minuend, result );
+	assert ( ! bigint_is_geq ( value, modulus ) );
 
 	/* Stop profiling */
 	profile_stop ( &bigint_mod_profiler );
+}
+
+/**
+ * Reduce supremum of big integer representation
+ *
+ * @v modulus0		Element 0 of big integer modulus
+ * @v result0		Element 0 of big integer to hold result
+ * @v size		Number of elements in modulus and value
+ *
+ * Reduce the value 2^k (where k is the bit width of the big integer
+ * representation) modulo the specified modulus.
+ */
+void bigint_reduce_supremum_raw ( bigint_element_t *modulus0,
+				  bigint_element_t *result0,
+				  unsigned int size ) {
+	bigint_t ( size ) __attribute__ (( may_alias ))
+		*modulus = ( ( void * ) modulus0 );
+	bigint_t ( size ) __attribute__ (( may_alias ))
+		*result = ( ( void * ) result0 );
+
+	/* Calculate (2^k) mod N via direct reduction of (2^k - N) mod N */
+	memset ( result, 0, sizeof ( *result ) );
+	bigint_subtract ( modulus, result );
+	bigint_reduce ( modulus, result );
 }
 
 /**
@@ -311,27 +307,22 @@ void bigint_reduce_raw ( const bigint_element_t *minuend0,
  * @v invertend0	Element 0 of odd big integer to be inverted
  * @v inverse0		Element 0 of big integer to hold result
  * @v size		Number of elements in invertend and result
- * @v tmp		Temporary working space
  */
 void bigint_mod_invert_raw ( const bigint_element_t *invertend0,
-			     bigint_element_t *inverse0,
-			     unsigned int size, void *tmp ) {
+			     bigint_element_t *inverse0, unsigned int size ) {
 	const bigint_t ( size ) __attribute__ (( may_alias ))
 		*invertend = ( ( const void * ) invertend0 );
 	bigint_t ( size ) __attribute__ (( may_alias ))
 		*inverse = ( ( void * ) inverse0 );
-	struct {
-		bigint_t ( size ) residue;
-	} *temp = tmp;
-	const unsigned int width = ( 8 * sizeof ( bigint_element_t ) );
+	bigint_element_t accum;
+	bigint_element_t bit;
 	unsigned int i;
 
 	/* Sanity check */
-	assert ( invertend->element[0] & 1 );
+	assert ( bigint_bit_is_set ( invertend, 0 ) );
 
-	/* Initialise temporary working space and output value */
-	memset ( &temp->residue, 0xff, sizeof ( temp->residue ) );
-	memset ( inverse, 0, sizeof ( *inverse ) );
+	/* Initialise output */
+	memset ( inverse, 0xff, sizeof ( *inverse ) );
 
 	/* Compute inverse modulo 2^(width)
 	 *
@@ -339,71 +330,261 @@ void bigint_mod_invert_raw ( const bigint_element_t *invertend0,
 	 * presented in "A New Algorithm for Inversion mod p^k (Koç,
 	 * 2017)".
 	 *
-	 * Each loop iteration calculates one bit of the inverse.  The
-	 * residue value is the two's complement negation of the value
-	 * "b" as used by Koç, to allow for division by two using a
-	 * logical right shift (since we have no arithmetic right
-	 * shift operation for big integers).
+	 * Each inner loop iteration calculates one bit of the
+	 * inverse.  The residue value is the two's complement
+	 * negation of the value "b" as used by Koç, to allow for
+	 * division by two using a logical right shift (since we have
+	 * no arithmetic right shift operation for big integers).
+	 *
+	 * The residue is stored in the as-yet uncalculated portion of
+	 * the inverse.  The size of the residue therefore decreases
+	 * by one element for each outer loop iteration.  Trivial
+	 * inspection of the algorithm shows that any higher bits
+	 * could not contribute to the eventual output value, and so
+	 * we may safely reuse storage this way.
 	 *
 	 * Due to the suffix property of inverses mod 2^k, the result
 	 * represents the least significant bits of the inverse modulo
 	 * an arbitrarily large 2^k.
 	 */
-	for ( i = 0 ; i < ( 8 * sizeof ( *inverse ) ) ; i++ ) {
-		if ( temp->residue.element[0] & 1 ) {
-			inverse->element[ i / width ] |=
-				( 1UL << ( i % width ) );
-			bigint_add ( invertend, &temp->residue );
+	for ( i = size ; i > 0 ; i-- ) {
+		const bigint_t ( i ) __attribute__ (( may_alias ))
+			*addend = ( ( const void * ) invertend );
+		bigint_t ( i ) __attribute__ (( may_alias ))
+			*residue = ( ( void * ) inverse );
+
+		/* Calculate one element's worth of inverse bits */
+		for ( accum = 0, bit = 1 ; bit ; bit <<= 1 ) {
+			if ( bigint_bit_is_set ( residue, 0 ) ) {
+				accum |= bit;
+				bigint_add ( addend, residue );
+			}
+			bigint_shr ( residue );
 		}
-		bigint_shr ( &temp->residue );
+
+		/* Store in the element no longer required to hold residue */
+		inverse->element[ i - 1 ] = accum;
+	}
+
+	/* Correct order of inverse elements */
+	for ( i = 0 ; i < ( size / 2 ) ; i++ ) {
+		accum = inverse->element[i];
+		inverse->element[i] = inverse->element[ size - 1 - i ];
+		inverse->element[ size - 1 - i ] = accum;
 	}
 }
 
 /**
- * Perform modular multiplication of big integers
+ * Perform relaxed Montgomery reduction (REDC) of a big integer
  *
- * @v multiplicand0	Element 0 of big integer to be multiplied
- * @v multiplier0	Element 0 of big integer to be multiplied
- * @v modulus0		Element 0 of big integer modulus
+ * @v modulus0		Element 0 of big integer odd modulus
+ * @v value0		Element 0 of big integer to be reduced
  * @v result0		Element 0 of big integer to hold result
- * @v size		Number of elements in base, modulus, and result
- * @v tmp		Temporary working space
+ * @v size		Number of elements in modulus and result
+ * @ret carry		Carry out
+ *
+ * The value to be reduced will be made divisible by the size of the
+ * modulus while retaining its residue class (i.e. multiples of the
+ * modulus will be added until the low half of the value is zero).
+ *
+ * The result may be expressed as
+ *
+ *    tR = x + mN
+ *
+ * where x is the input value, N is the modulus, R=2^n (where n is the
+ * number of bits in the representation of the modulus, including any
+ * leading zero bits), and m is the number of multiples of the modulus
+ * added to make the result tR divisible by R.
+ *
+ * The maximum addend is mN <= (R-1)*N (and such an m can be proven to
+ * exist since N is limited to being odd and therefore coprime to R).
+ *
+ * Since the result of this addition is one bit larger than the input
+ * value, a carry out bit is also returned.  The caller may be able to
+ * prove that the carry out is always zero, in which case it may be
+ * safely ignored.
+ *
+ * The upper half of the output value (i.e. t) will also be copied to
+ * the result pointer.  It is permissible for the result pointer to
+ * overlap the lower half of the input value.
+ *
+ * External knowledge of constraints on the modulus and the input
+ * value may be used to prove constraints on the result.  The
+ * constraint on the modulus may be generally expressed as
+ *
+ *    R > kN
+ *
+ * for some positive integer k.  The value k=1 is allowed, and simply
+ * expresses that the modulus fits within the number of bits in its
+ * own representation.
+ *
+ * For classic Montgomery reduction, we have k=1, i.e. R > N and a
+ * separate constraint that the input value is in the range x < RN.
+ * This gives the result constraint
+ *
+ *    tR < RN + (R-1)N
+ *       < 2RN - N
+ *       < 2RN
+ *     t < 2N
+ *
+ * A single subtraction of the modulus may therefore be required to
+ * bring it into the range t < N.
+ *
+ * When the input value is known to be a product of two integers A and
+ * B, with A < aN and B < bN, we get the result constraint
+ *
+ *    tR < abN^2 + (R-1)N
+ *       < (ab/k)RN + RN - N
+ *       < (1 + ab/k)RN
+ *     t < (1 + ab/k)N
+ *
+ * If we have k=a=b=1, i.e. R > N with A < N and B < N, then the
+ * result is in the range t < 2N and may require a single subtraction
+ * of the modulus to bring it into the range t < N so that it may be
+ * used as an input on a subsequent iteration.
+ *
+ * If we have k=4 and a=b=2, i.e. R > 4N with A < 2N and B < 2N, then
+ * the result is in the range t < 2N and may immediately be used as an
+ * input on a subsequent iteration, without requiring a subtraction.
+ *
+ * Larger values of k may be used to allow for larger values of a and
+ * b, which can be useful to elide intermediate reductions in a
+ * calculation chain that involves additions and subtractions between
+ * multiplications (as used in elliptic curve point addition, for
+ * example).  As a general rule: each intermediate addition or
+ * subtraction will require k to be doubled.
+ *
+ * When the input value is known to be a single integer A, with A < aN
+ * (as used when converting out of Montgomery form), we get the result
+ * constraint
+ *
+ *    tR < aN + (R-1)N
+ *       < RN + (a-1)N
+ *
+ * If we have a=1, i.e. A < N, then the constraint becomes
+ *
+ *    tR < RN
+ *     t < N
+ *
+ * and so the result is immediately in the range t < N with no
+ * subtraction of the modulus required.
+ *
+ * For any larger value of a, the result value t=N becomes possible.
+ * Additional external knowledge may potentially be used to prove that
+ * t=N cannot occur.  For example: if the caller is performing modular
+ * exponentiation with a prime modulus (or, more generally, a modulus
+ * that is coprime to the base), then there is no way for a non-zero
+ * base value to end up producing an exact multiple of the modulus.
+ * If t=N cannot be disproved, then conversion out of Montgomery form
+ * may require an additional subtraction of the modulus.
  */
-void bigint_mod_multiply_raw ( const bigint_element_t *multiplicand0,
-			       const bigint_element_t *multiplier0,
-			       const bigint_element_t *modulus0,
-			       bigint_element_t *result0,
-			       unsigned int size, void *tmp ) {
-	const bigint_t ( size ) __attribute__ (( may_alias )) *multiplicand =
-		( ( const void * ) multiplicand0 );
-	const bigint_t ( size ) __attribute__ (( may_alias )) *multiplier =
-		( ( const void * ) multiplier0 );
-	const bigint_t ( size ) __attribute__ (( may_alias )) *modulus =
-		( ( const void * ) modulus0 );
-	bigint_t ( size ) __attribute__ (( may_alias )) *result =
-		( ( void * ) result0 );
-	struct {
-		bigint_t ( size * 2 ) result;
-		bigint_t ( size * 2 ) modulus;
-	} *temp = tmp;
+int bigint_montgomery_relaxed_raw ( const bigint_element_t *modulus0,
+				    bigint_element_t *value0,
+				    bigint_element_t *result0,
+				    unsigned int size ) {
+	const bigint_t ( size ) __attribute__ (( may_alias ))
+		*modulus = ( ( const void * ) modulus0 );
+	union {
+		bigint_t ( size * 2 ) full;
+		struct {
+			bigint_t ( size ) low;
+			bigint_t ( size ) high;
+		} __attribute__ (( packed ));
+	} __attribute__ (( may_alias )) *value = ( ( void * ) value0 );
+	bigint_t ( size ) __attribute__ (( may_alias ))
+		*result = ( ( void * ) result0 );
+	static bigint_t ( 1 ) cached;
+	static bigint_t ( 1 ) negmodinv;
+	bigint_element_t multiple;
+	bigint_element_t carry;
+	unsigned int i;
+	unsigned int j;
+	int overflow;
 
-	/* Start profiling */
-	profile_start ( &bigint_mod_multiply_profiler );
+	/* Sanity checks */
+	assert ( bigint_bit_is_set ( modulus, 0 ) );
+
+	/* Calculate inverse (or use cached version) */
+	if ( cached.element[0] != modulus->element[0] ) {
+		bigint_mod_invert ( modulus, &negmodinv );
+		negmodinv.element[0] = -negmodinv.element[0];
+		cached.element[0] = modulus->element[0];
+	}
+
+	/* Perform multiprecision Montgomery reduction */
+	for ( i = 0 ; i < size ; i++ ) {
+
+		/* Determine scalar multiple for this round */
+		multiple = ( value->low.element[i] * negmodinv.element[0] );
+
+		/* Multiply value to make it divisible by 2^(width*i) */
+		carry = 0;
+		for ( j = 0 ; j < size ; j++ ) {
+			bigint_multiply_one ( multiple, modulus->element[j],
+					      &value->full.element[ i + j ],
+					      &carry );
+		}
+
+		/* Since value is now divisible by 2^(width*i), we
+		 * know that the current low element must have been
+		 * zeroed.
+		 */
+		assert ( value->low.element[i] == 0 );
+
+		/* Store the multiplication carry out in the result,
+		 * avoiding the need to immediately propagate the
+		 * carry through the remaining elements.
+		 */
+		result->element[i] = carry;
+	}
+
+	/* Add the accumulated carries */
+	overflow = bigint_add ( result, &value->high );
+
+	/* Copy to result buffer */
+	bigint_copy ( &value->high, result );
+
+	return overflow;
+}
+
+/**
+ * Perform classic Montgomery reduction (REDC) of a big integer
+ *
+ * @v modulus0		Element 0 of big integer odd modulus
+ * @v value0		Element 0 of big integer to be reduced
+ * @v result0		Element 0 of big integer to hold result
+ * @v size		Number of elements in modulus and result
+ */
+void bigint_montgomery_raw ( const bigint_element_t *modulus0,
+			     bigint_element_t *value0,
+			     bigint_element_t *result0,
+			     unsigned int size ) {
+	const bigint_t ( size ) __attribute__ (( may_alias ))
+		*modulus = ( ( const void * ) modulus0 );
+	union {
+		bigint_t ( size * 2 ) full;
+		struct {
+			bigint_t ( size ) low;
+			bigint_t ( size ) high;
+		} __attribute__ (( packed ));
+	} __attribute__ (( may_alias )) *value = ( ( void * ) value0 );
+	bigint_t ( size ) __attribute__ (( may_alias ))
+		*result = ( ( void * ) result0 );
+	int overflow;
+	int underflow;
 
 	/* Sanity check */
-	assert ( sizeof ( *temp ) == bigint_mod_multiply_tmp_len ( modulus ) );
+	assert ( ! bigint_is_geq ( &value->high, modulus ) );
 
-	/* Perform multiplication */
-	bigint_multiply ( multiplicand, multiplier, &temp->result );
+	/* Perform relaxed Montgomery reduction */
+	overflow = bigint_montgomery_relaxed ( modulus, &value->full, result );
 
-	/* Reduce result */
-	bigint_reduce ( &temp->result, modulus, result, temp );
+	/* Conditionally subtract the modulus once */
+	underflow = bigint_subtract ( modulus, result );
+	bigint_swap ( result, &value->high, ( underflow & ~overflow ) );
 
 	/* Sanity check */
 	assert ( ! bigint_is_geq ( result, modulus ) );
-
-	/* Stop profiling */
-	profile_stop ( &bigint_mod_multiply_profiler );
 }
 
 /**
@@ -431,25 +612,135 @@ void bigint_mod_exp_raw ( const bigint_element_t *base0,
 		*exponent = ( ( const void * ) exponent0 );
 	bigint_t ( size ) __attribute__ (( may_alias )) *result =
 		( ( void * ) result0 );
-	size_t mod_multiply_len = bigint_mod_multiply_tmp_len ( modulus );
+	const unsigned int width = ( 8 * sizeof ( bigint_element_t ) );
 	struct {
-		bigint_t ( size ) base;
-		bigint_t ( exponent_size ) exponent;
-		uint8_t mod_multiply[mod_multiply_len];
+		union {
+			bigint_t ( 2 * size ) padded_modulus;
+			struct {
+				bigint_t ( size ) modulus;
+				bigint_t ( size ) stash;
+			};
+		};
+		union {
+			bigint_t ( 2 * size ) full;
+			bigint_t ( size ) low;
+		} product;
 	} *temp = tmp;
-	static const uint8_t start[1] = { 0x01 };
+	const uint8_t one[1] = { 1 };
+	bigint_element_t submask;
+	unsigned int subsize;
+	unsigned int scale;
+	unsigned int max;
+	unsigned int bit;
 
-	memcpy ( &temp->base, base, sizeof ( temp->base ) );
-	memcpy ( &temp->exponent, exponent, sizeof ( temp->exponent ) );
-	bigint_init ( result, start, sizeof ( start ) );
+	/* Sanity check */
+	assert ( sizeof ( *temp ) == bigint_mod_exp_tmp_len ( modulus ) );
 
-	while ( ! bigint_is_zero ( &temp->exponent ) ) {
-		if ( bigint_bit_is_set ( &temp->exponent, 0 ) ) {
-			bigint_mod_multiply ( result, &temp->base, modulus,
-					      result, temp->mod_multiply );
+	/* Handle degenerate case of zero modulus */
+	if ( ! bigint_max_set_bit ( modulus ) ) {
+		memset ( result, 0, sizeof ( *result ) );
+		return;
+	}
+
+	/* Factor modulus as (N * 2^scale) where N is odd */
+	bigint_grow ( modulus, &temp->padded_modulus );
+	for ( scale = 0 ; ( ! bigint_bit_is_set ( &temp->modulus, 0 ) ) ;
+	      scale++ ) {
+		bigint_shr ( &temp->modulus );
+	}
+	subsize = ( ( scale + width - 1 ) / width );
+	submask = ( ( 1UL << ( scale % width ) ) - 1 );
+	if ( ! submask )
+		submask = ~submask;
+
+	/* Calculate (R^2 mod N) */
+	bigint_reduce_supremum ( &temp->padded_modulus, &temp->product.full );
+	bigint_copy ( &temp->product.low, &temp->stash );
+
+	/* Initialise result = Montgomery(1, R^2 mod N) */
+	bigint_montgomery ( &temp->modulus, &temp->product.full, result );
+
+	/* Convert base into Montgomery form */
+	bigint_multiply ( base, &temp->stash, &temp->product.full );
+	bigint_montgomery ( &temp->modulus, &temp->product.full,
+			    &temp->stash );
+
+	/* Calculate x1 = base^exponent modulo N */
+	max = bigint_max_set_bit ( exponent );
+	for ( bit = 1 ; bit <= max ; bit++ ) {
+
+		/* Square (and reduce) */
+		bigint_multiply ( result, result, &temp->product.full );
+		bigint_montgomery ( &temp->modulus, &temp->product.full,
+				    result );
+
+		/* Multiply (and reduce) */
+		bigint_multiply ( &temp->stash, result, &temp->product.full );
+		bigint_montgomery ( &temp->modulus, &temp->product.full,
+				    &temp->product.low );
+
+		/* Conditionally swap the multiplied result */
+		bigint_swap ( result, &temp->product.low,
+			      bigint_bit_is_set ( exponent, ( max - bit ) ) );
+	}
+
+	/* Convert back out of Montgomery form */
+	bigint_grow ( result, &temp->product.full );
+	bigint_montgomery_relaxed ( &temp->modulus, &temp->product.full,
+				    result );
+
+	/* Handle even moduli via Garner's algorithm */
+	if ( subsize ) {
+		const bigint_t ( subsize ) __attribute__ (( may_alias ))
+			*subbase = ( ( const void * ) base );
+		bigint_t ( subsize ) __attribute__ (( may_alias ))
+			*submodulus = ( ( void * ) &temp->modulus );
+		bigint_t ( subsize ) __attribute__ (( may_alias ))
+			*substash = ( ( void * ) &temp->stash );
+		bigint_t ( subsize ) __attribute__ (( may_alias ))
+			*subresult = ( ( void * ) result );
+		union {
+			bigint_t ( 2 * subsize ) full;
+			bigint_t ( subsize ) low;
+		} __attribute__ (( may_alias ))
+			*subproduct = ( ( void * ) &temp->product.full );
+
+		/* Calculate x2 = base^exponent modulo 2^k */
+		bigint_init ( substash, one, sizeof ( one ) );
+		for ( bit = 1 ; bit <= max ; bit++ ) {
+
+			/* Square (and reduce) */
+			bigint_multiply ( substash, substash,
+					  &subproduct->full );
+			bigint_copy ( &subproduct->low, substash );
+
+			/* Multiply (and reduce) */
+			bigint_multiply ( subbase, substash,
+					  &subproduct->full );
+
+			/* Conditionally swap the multiplied result */
+			bigint_swap ( substash, &subproduct->low,
+				      bigint_bit_is_set ( exponent,
+							  ( max - bit ) ) );
 		}
-		bigint_shr ( &temp->exponent );
-		bigint_mod_multiply ( &temp->base, &temp->base, modulus,
-				      &temp->base, temp->mod_multiply );
+
+		/* Calculate N^-1 modulo 2^k */
+		bigint_mod_invert ( submodulus, &subproduct->low );
+		bigint_copy ( &subproduct->low, submodulus );
+
+		/* Calculate y = (x2 - x1) * N^-1 modulo 2^k */
+		bigint_subtract ( subresult, substash );
+		bigint_multiply ( substash, submodulus, &subproduct->full );
+		subproduct->low.element[ subsize - 1 ] &= submask;
+		bigint_grow ( &subproduct->low, &temp->stash );
+
+		/* Reconstruct N */
+		bigint_mod_invert ( submodulus, &subproduct->low );
+		bigint_copy ( &subproduct->low, submodulus );
+
+		/* Calculate x = x1 + N * y */
+		bigint_multiply ( &temp->modulus, &temp->stash,
+				  &temp->product.full );
+		bigint_add ( &temp->product.low, result );
 	}
 }
