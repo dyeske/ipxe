@@ -132,10 +132,7 @@ static int efi_image_exec ( struct image *image ) {
 	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
 	struct efi_snp_device *snpdev;
 	EFI_DEVICE_PATH_PROTOCOL *path;
-	union {
-		EFI_LOADED_IMAGE_PROTOCOL *image;
-		void *interface;
-	} loaded;
+	EFI_LOADED_IMAGE_PROTOCOL *loaded;
 	struct image *shim;
 	struct image *exec;
 	EFI_HANDLE handle;
@@ -234,41 +231,38 @@ static int efi_image_exec ( struct image *image ) {
 	}
 
 	/* Get the loaded image protocol for the newly loaded image */
-	efirc = bs->OpenProtocol ( handle, &efi_loaded_image_protocol_guid,
-				   &loaded.interface, efi_image_handle,
-				   NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL );
-	if ( efirc ) {
+	if ( ( rc = efi_open (  handle, &efi_loaded_image_protocol_guid,
+				&loaded ) ) != 0 ) {
 		/* Should never happen */
-		rc = -EEFI ( efirc );
 		goto err_open_protocol;
 	}
 
 	/* Some EFI 1.10 implementations seem not to fill in DeviceHandle */
-	if ( loaded.image->DeviceHandle == NULL ) {
+	if ( loaded->DeviceHandle == NULL ) {
 		DBGC ( image, "EFIIMAGE %s filling in missing DeviceHandle\n",
 		       image->name );
-		loaded.image->DeviceHandle = snpdev->handle;
+		loaded->DeviceHandle = snpdev->handle;
 	}
 
 	/* Sanity checks */
-	assert ( loaded.image->ParentHandle == efi_image_handle );
-	assert ( loaded.image->DeviceHandle == snpdev->handle );
-	assert ( loaded.image->LoadOptionsSize == 0 );
-	assert ( loaded.image->LoadOptions == NULL );
+	assert ( loaded->ParentHandle == efi_image_handle );
+	assert ( loaded->DeviceHandle == snpdev->handle );
+	assert ( loaded->LoadOptionsSize == 0 );
+	assert ( loaded->LoadOptions == NULL );
 
 	/* Record image code type */
-	type = loaded.image->ImageCodeType;
+	type = loaded->ImageCodeType;
 
 	/* Set command line */
-	loaded.image->LoadOptions = cmdline;
-	loaded.image->LoadOptionsSize =
+	loaded->LoadOptions = cmdline;
+	loaded->LoadOptionsSize =
 		( ( wcslen ( cmdline ) + 1 /* NUL */ ) * sizeof ( wchar_t ) );
 
 	/* Release network devices for use via SNP */
 	efi_snp_release();
 
 	/* Wrap calls made by the loaded image (for debugging) */
-	efi_wrap ( handle );
+	efi_wrap_image ( handle );
 
 	/* Reset console since image will probably use it */
 	console_reset();
@@ -291,6 +285,7 @@ static int efi_image_exec ( struct image *image ) {
 	rc = 0;
 
  err_start_image:
+	efi_unwrap();
 	efi_snp_claim();
  err_open_protocol:
 	/* If there was no error, then the image must have been

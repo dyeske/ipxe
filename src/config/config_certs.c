@@ -25,18 +25,12 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 /** @file
  *
- * ASN.1 file format configuration
+ * Certificate source configuration
  *
  */
 
 PROVIDE_REQUIRING_SYMBOL();
 
-#ifdef IMAGE_DER
-REQUIRE_OBJECT ( der );
-#endif
-#ifdef IMAGE_PEM
-REQUIRE_OBJECT ( pem );
-#endif
-#ifdef IMAGE_EFISIG
-REQUIRE_OBJECT ( efi_siglist );
+#ifdef CERTS_EFI
+REQUIRE_OBJECT ( efi_cacert );
 #endif

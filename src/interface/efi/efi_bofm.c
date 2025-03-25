@@ -232,10 +232,20 @@ static int efi_bofm_start ( struct efi_device *efidev ) {
 	EFI_STATUS efirc;
 	int rc;
 
-	/* Open PCI device, if possible */
-	if ( ( rc = efipci_open ( device, EFI_OPEN_PROTOCOL_GET_PROTOCOL,
-				  &efipci ) ) != 0 )
+	/* Get PCI device information */
+	if ( ( rc = efipci_info ( device, &efipci ) ) != 0 ) {
+		DBGC ( device, "EFIBOFM %s cannot get PCI information: %s\n",
+		       efi_handle_name ( device ), strerror ( rc ) );
+		goto err_info;
+	}
+
+	/* Open PCI I/O protocol */
+	if ( ( rc = efi_open_unsafe ( device, &efi_pci_io_protocol_guid,
+				      &efipci.io ) ) != 0 ) {
+		DBGC ( device, "EFIBOFM %s cannot open PCI device: %s\n",
+		       efi_handle_name ( device ), strerror ( rc ) );
 		goto err_open;
+	}
 
 	/* Locate BOFM protocol */
 	if ( ( efirc = bs->LocateProtocol ( &bofm1_protocol_guid, NULL,
@@ -313,8 +323,9 @@ static int efi_bofm_start ( struct efi_device *efidev ) {
 
  err_set_status:
  err_locate_bofm:
-	efipci_close ( device );
+	efi_close_unsafe ( device, &efi_pci_io_protocol_guid );
  err_open:
+ err_info:
 	return rc;
 }
 

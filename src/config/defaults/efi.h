@@ -35,6 +35,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #define	IMAGE_EFI		/* EFI image support */
 #define	IMAGE_SCRIPT		/* iPXE script image support */
+#define IMAGE_EFISIG		/* EFI signature list support */
 
 #define	SANBOOT_PROTO_ISCSI	/* iSCSI protocol */
 #define	SANBOOT_PROTO_AOE	/* AoE protocol */
@@ -51,6 +52,8 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #define	REBOOT_CMD		/* Reboot command */
 
 #define EFI_SETTINGS		/* EFI variable settings */
+
+#define CERTS_EFI		/* EFI certificate sources */
 
 #if defined ( __i386__ ) || defined ( __x86_64__ )
 #define IOAPI_X86
