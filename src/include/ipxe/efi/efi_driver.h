@@ -33,6 +33,8 @@ struct efi_device {
 struct efi_driver {
 	/** Name */
 	const char *name;
+	/** Protocol to which exclusive access is required, if any */
+	EFI_GUID *exclude;
 	/**
 	 * Check if driver supports device
 	 *
@@ -62,8 +64,10 @@ struct efi_driver {
 #define __efi_driver( order ) __table_entry ( EFI_DRIVERS, order )
 
 #define EFI_DRIVER_EARLY	01	/**< Early drivers */
-#define EFI_DRIVER_NORMAL	02	/**< Normal drivers */
-#define EFI_DRIVER_LATE		03	/**< Late drivers */
+#define EFI_DRIVER_HARDWARE	02	/**< Hardware drivers */
+#define EFI_DRIVER_NII		03	/**< NII protocol drivers */
+#define EFI_DRIVER_SNP		04	/**< SNP protocol drivers */
+#define EFI_DRIVER_MNP		05	/**< MNP protocol drivers */
 
 /**
  * Set EFI driver-private data

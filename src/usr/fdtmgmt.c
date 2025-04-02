@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 Michael Brown <mbrown@fensystems.co.uk>.
+ * Copyright (C) 2025 Michael Brown <mbrown@fensystems.co.uk>.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -23,34 +23,29 @@
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
+#include <ipxe/fdt.h>
+#include <usr/fdtmgmt.h>
+
 /** @file
  *
- * MNP driver
+ * Flattened Device Tree management
  *
  */
-
-#include <errno.h>
-#include <ipxe/efi/efi.h>
-#include <ipxe/efi/efi_driver.h>
-#include <ipxe/efi/mnpnet.h>
-#include "snpnet.h"
 
 /**
- * Check to see if driver supports a device
+ * Apply flattened device tree image
  *
- * @v device		EFI device handle
+ * @v image		FDT image, or NULL to clear FDT
  * @ret rc		Return status code
  */
-static int mnp_supported ( EFI_HANDLE device ) {
-	EFI_GUID *binding = &efi_managed_network_service_binding_protocol_guid;
+int imgfdt ( struct image *image ) {
 
-	return snpnet_supported ( device, binding );
+	/* Record (or clear) FDT image */
+	image_tag ( image, &fdt_image );
+
+	/* Avoid including image in constructed initrd */
+	if ( image )
+		image_hide ( image );
+
+	return 0;
 }
-
-/** EFI MNP driver */
-struct efi_driver mnp_driver __efi_driver ( EFI_DRIVER_MNP ) = {
-	.name = "MNP",
-	.supported = mnp_supported,
-	.start = mnpnet_start,
-	.stop = mnpnet_stop,
-};

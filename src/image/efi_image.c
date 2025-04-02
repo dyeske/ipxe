@@ -33,6 +33,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <ipxe/efi/efi_driver.h>
 #include <ipxe/efi/efi_image.h>
 #include <ipxe/efi/efi_shim.h>
+#include <ipxe/efi/efi_fdt.h>
 #include <ipxe/image.h>
 #include <ipxe/init.h>
 #include <ipxe/features.h>
@@ -123,6 +124,25 @@ static wchar_t * efi_image_cmdline ( struct image *image ) {
 }
 
 /**
+ * Install EFI Flattened Device Tree table (when no FDT support is present)
+ *
+ * @v cmdline		Command line, or NULL
+ * @ret rc		Return status code
+ */
+__weak int efi_fdt_install ( const char *cmdline __unused ) {
+	return 0;
+}
+
+/**
+ * Uninstall EFI Flattened Device Tree table (when no FDT support is present)
+ *
+ * @ret rc		Return status code
+ */
+__weak int efi_fdt_uninstall ( void ) {
+	return 0;
+}
+
+/**
  * Execute EFI image
  *
  * @v image		EFI image
@@ -135,6 +155,7 @@ static int efi_image_exec ( struct image *image ) {
 	EFI_LOADED_IMAGE_PROTOCOL *loaded;
 	struct image *shim;
 	struct image *exec;
+	EFI_HANDLE device;
 	EFI_HANDLE handle;
 	EFI_MEMORY_TYPE type;
 	wchar_t *cmdline;
@@ -150,6 +171,7 @@ static int efi_image_exec ( struct image *image ) {
 		rc = -ENODEV;
 		goto err_no_snpdev;
 	}
+	device = snpdev->handle;
 
 	/* Use shim instead of directly executing image if applicable */
 	shim = ( efi_can_load ( image ) ?
@@ -167,24 +189,31 @@ static int efi_image_exec ( struct image *image ) {
 		goto err_register_image;
 
 	/* Install file I/O protocols */
-	if ( ( rc = efi_file_install ( snpdev->handle ) ) != 0 ) {
+	if ( ( rc = efi_file_install ( device ) ) != 0 ) {
 		DBGC ( image, "EFIIMAGE %s could not install file protocol: "
 		       "%s\n", image->name, strerror ( rc ) );
 		goto err_file_install;
 	}
 
 	/* Install PXE base code protocol */
-	if ( ( rc = efi_pxe_install ( snpdev->handle, snpdev->netdev ) ) != 0 ){
+	if ( ( rc = efi_pxe_install ( device, snpdev->netdev ) ) != 0 ){
 		DBGC ( image, "EFIIMAGE %s could not install PXE protocol: "
 		       "%s\n", image->name, strerror ( rc ) );
 		goto err_pxe_install;
 	}
 
 	/* Install iPXE download protocol */
-	if ( ( rc = efi_download_install ( snpdev->handle ) ) != 0 ) {
+	if ( ( rc = efi_download_install ( device ) ) != 0 ) {
 		DBGC ( image, "EFIIMAGE %s could not install iPXE download "
 		       "protocol: %s\n", image->name, strerror ( rc ) );
 		goto err_download_install;
+	}
+
+	/* Install Flattened Device Tree table */
+	if ( ( rc = efi_fdt_install ( image->cmdline ) ) != 0 ) {
+		DBGC ( image, "EFIIMAGE %s could not install FDT: %s\n",
+		       image->name, strerror ( rc ) );
+		goto err_fdt_install;
 	}
 
 	/* Create device path for image */
@@ -207,8 +236,7 @@ static int efi_image_exec ( struct image *image ) {
 
 	/* Install shim special handling if applicable */
 	if ( shim &&
-	     ( ( rc = efi_shim_install ( shim, snpdev->handle,
-					 &cmdline ) ) != 0 ) ){
+	     ( ( rc = efi_shim_install ( shim, device, &cmdline ) ) != 0 ) ) {
 		DBGC ( image, "EFIIMAGE %s could not install shim handling: "
 		       "%s\n", image->name, strerror ( rc ) );
 		goto err_shim_install;
@@ -241,12 +269,12 @@ static int efi_image_exec ( struct image *image ) {
 	if ( loaded->DeviceHandle == NULL ) {
 		DBGC ( image, "EFIIMAGE %s filling in missing DeviceHandle\n",
 		       image->name );
-		loaded->DeviceHandle = snpdev->handle;
+		loaded->DeviceHandle = device;
 	}
 
 	/* Sanity checks */
 	assert ( loaded->ParentHandle == efi_image_handle );
-	assert ( loaded->DeviceHandle == snpdev->handle );
+	assert ( loaded->DeviceHandle == device );
 	assert ( loaded->LoadOptionsSize == 0 );
 	assert ( loaded->LoadOptions == NULL );
 
@@ -266,6 +294,9 @@ static int efi_image_exec ( struct image *image ) {
 
 	/* Reset console since image will probably use it */
 	console_reset();
+
+	/* Assume that image may cause SNP device to be removed */
+	snpdev = NULL;
 
 	/* Start the image */
 	if ( ( efirc = bs->StartImage ( handle, NULL, NULL ) ) != 0 ) {
@@ -313,11 +344,13 @@ static int efi_image_exec ( struct image *image ) {
  err_cmdline:
 	free ( path );
  err_image_path:
-	efi_download_uninstall ( snpdev->handle );
+	efi_fdt_uninstall();
+ err_fdt_install:
+	efi_download_uninstall ( device );
  err_download_install:
-	efi_pxe_uninstall ( snpdev->handle );
+	efi_pxe_uninstall ( device );
  err_pxe_install:
-	efi_file_uninstall ( snpdev->handle );
+	efi_file_uninstall ( device );
  err_file_install:
 	unregister_image ( image );
  err_register_image:

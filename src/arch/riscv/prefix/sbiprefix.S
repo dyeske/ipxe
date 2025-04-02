@@ -121,8 +121,10 @@ _sbi_start:
 	STOREN	s0, (t0)
 
 	/* Register device tree */
-	mv	a0, s1
-	call	register_fdt
+	la	a0, sysfdt
+	mv	a1, s1
+	li	a2, -1
+	call	fdt_parse
 
 	/* Call main program */
 	progress "\n\n"

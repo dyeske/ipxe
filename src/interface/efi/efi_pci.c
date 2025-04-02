@@ -914,8 +914,9 @@ static void efipci_stop ( struct efi_device *efidev ) {
 }
 
 /** EFI PCI driver */
-struct efi_driver efipci_driver __efi_driver ( EFI_DRIVER_NORMAL ) = {
+struct efi_driver efipci_driver __efi_driver ( EFI_DRIVER_HARDWARE ) = {
 	.name = "PCI",
+	.exclude = &efi_pci_io_protocol_guid,
 	.supported = efipci_supported,
 	.start = efipci_start,
 	.stop = efipci_stop,
