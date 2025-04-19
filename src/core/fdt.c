@@ -49,37 +49,16 @@ struct image_tag fdt_image __image_tag = {
 /** Amount of free space to add whenever we have to reallocate a tree */
 #define FDT_INSERT_PAD 1024
 
-/** A position within a device tree */
-struct fdt_cursor {
-	/** Offset within structure block */
-	unsigned int offset;
-	/** Tree depth */
-	int depth;
-};
-
-/** A lexical descriptor */
-struct fdt_descriptor {
-	/** Offset within structure block */
-	unsigned int offset;
-	/** Node or property name (if applicable) */
-	const char *name;
-	/** Property data (if applicable) */
-	const void *data;
-	/** Length of property data (if applicable) */
-	size_t len;
-};
-
 /**
- * Traverse device tree
+ * Describe device tree token
  *
  * @v fdt		Device tree
- * @v pos		Position within device tree
- * @v desc		Lexical descriptor to fill in
+ * @v offset		Offset within structure block
+ * @v desc		Token descriptor to fill in
  * @ret rc		Return status code
  */
-static int fdt_traverse ( struct fdt *fdt,
-			  struct fdt_cursor *pos,
-			  struct fdt_descriptor *desc ) {
+int fdt_describe ( struct fdt *fdt, unsigned int offset,
+		   struct fdt_descriptor *desc ) {
 	const fdt_token_t *token;
 	const void *data;
 	const struct fdt_prop *prop;
@@ -88,18 +67,18 @@ static int fdt_traverse ( struct fdt *fdt,
 	size_t len;
 
 	/* Sanity checks */
-	assert ( pos->offset <= fdt->len );
-	assert ( ( pos->offset & ( FDT_STRUCTURE_ALIGN - 1 ) ) == 0 );
+	assert ( offset <= fdt->len );
+	assert ( ( offset & ( FDT_STRUCTURE_ALIGN - 1 ) ) == 0 );
 
 	/* Initialise descriptor */
 	memset ( desc, 0, sizeof ( *desc ) );
-	desc->offset = pos->offset;
+	desc->offset = offset;
 
 	/* Locate token and calculate remaining space */
-	token = ( fdt->raw + fdt->structure + pos->offset );
-	remaining = ( fdt->len - pos->offset );
+	token = ( fdt->raw + fdt->structure + offset );
+	remaining = ( fdt->len - offset );
 	if ( remaining < sizeof ( *token ) ) {
-		DBGC ( fdt, "FDT truncated tree at +%#04x\n", pos->offset );
+		DBGC ( fdt, "FDT truncated tree at +%#04x\n", offset );
 		return -EINVAL;
 	}
 	remaining -= sizeof ( *token );
@@ -116,25 +95,16 @@ static int fdt_traverse ( struct fdt *fdt,
 		len = ( strnlen ( desc->name, remaining ) + 1 /* NUL */ );
 		if ( remaining < len ) {
 			DBGC ( fdt, "FDT unterminated node name at +%#04x\n",
-			       pos->offset );
+			       offset );
 			return -EINVAL;
 		}
-		pos->depth++;
+		desc->depth = +1;
 		break;
 
 	case cpu_to_be32 ( FDT_END_NODE ):
 
 		/* End of node */
-		if ( pos->depth < 0 ) {
-			DBGC ( fdt, "FDT spurious node end at +%#04x\n",
-			       pos->offset );
-			return -EINVAL;
-		}
-		pos->depth--;
-		if ( pos->depth < 0 ) {
-			/* End of (sub)tree */
-			return -ENOENT;
-		}
+		desc->depth = -1;
 		break;
 
 	case cpu_to_be32 ( FDT_PROP ):
@@ -143,7 +113,7 @@ static int fdt_traverse ( struct fdt *fdt,
 		prop = data;
 		if ( remaining < sizeof ( *prop ) ) {
 			DBGC ( fdt, "FDT truncated property at +%#04x\n",
-			       pos->offset );
+			       offset );
 			return -EINVAL;
 		}
 		desc->data = ( ( ( const void * ) prop ) + sizeof ( *prop ) );
@@ -151,13 +121,13 @@ static int fdt_traverse ( struct fdt *fdt,
 		len = ( sizeof ( *prop ) + desc->len );
 		if ( remaining < len ) {
 			DBGC ( fdt, "FDT overlength property at +%#04x\n",
-			       pos->offset );
+			       offset );
 			return -EINVAL;
 		}
 		name_off = be32_to_cpu ( prop->name_off );
 		if ( name_off > fdt->strings_len ) {
 			DBGC ( fdt, "FDT property name outside strings "
-			       "block at +%#04x\n", pos->offset );
+			       "block at +%#04x\n", offset );
 			return -EINVAL;
 		}
 		desc->name = ( fdt->raw + fdt->strings + name_off );
@@ -172,19 +142,73 @@ static int fdt_traverse ( struct fdt *fdt,
 
 		/* Unrecognised or unexpected token */
 		DBGC ( fdt, "FDT unexpected token %#08x at +%#04x\n",
-		       be32_to_cpu ( *token ), pos->offset );
+		       be32_to_cpu ( *token ), offset );
 		return -EINVAL;
 	}
 
-	/* Update cursor */
+	/* Calculate offset to next token */
 	len = ( ( len + FDT_STRUCTURE_ALIGN - 1 ) &
 		~( FDT_STRUCTURE_ALIGN - 1 ) );
-	pos->offset += ( sizeof ( *token ) + len );
+	offset += ( sizeof ( *token ) + len );
+	desc->next = offset;
 
 	/* Sanity checks */
-	assert ( pos->offset <= fdt->len );
+	assert ( offset <= fdt->len );
 
 	return 0;
+}
+
+/**
+ * Describe next device tree token
+ *
+ * @v fdt		Device tree
+ * @v desc		Token descriptor to update
+ * @ret rc		Return status code
+ */
+static int fdt_next ( struct fdt *fdt, struct fdt_descriptor *desc ) {
+
+	/* Describe next token */
+	return fdt_describe ( fdt, desc->next, desc );
+}
+
+/**
+ * Enter node
+ *
+ * @v fdt		Device tree
+ * @v offset		Starting node offset
+ * @v desc		Begin node descriptor to fill in
+ * @ret rc		Return status code
+ */
+static int fdt_enter ( struct fdt *fdt, unsigned int offset,
+		struct fdt_descriptor *desc ) {
+	int rc;
+
+	/* Find begin node token */
+	for ( ; ; offset = desc->next ) {
+
+		/* Describe token */
+		if ( ( rc = fdt_describe ( fdt, offset, desc ) ) != 0 ) {
+			DBGC ( fdt, "FDT +%#04x has malformed node: %s\n",
+			       offset, strerror ( rc ) );
+			return rc;
+		}
+
+		/* Check for begin node token */
+		if ( desc->depth > 0 )
+			return 0;
+
+		/* Check for non-NOPs */
+		if ( desc->depth ) {
+			DBGC ( fdt, "FDT +%#04x has spurious node end at "
+			       "+%#04x\n", offset, desc->offset );
+			return -EINVAL;
+		}
+		if ( desc->name ) {
+			DBGC ( fdt, "FDT +%#04x has spurious property at "
+			       "+%#04x\n", offset, desc->offset );
+			return -EINVAL;
+		}
+	}
 }
 
 /**
@@ -198,43 +222,45 @@ static int fdt_traverse ( struct fdt *fdt,
  */
 static int fdt_child ( struct fdt *fdt, unsigned int offset, const char *name,
 		       unsigned int *child ) {
-	struct fdt_cursor pos;
 	struct fdt_descriptor desc;
-	unsigned int orig_offset;
+	const char *sep;
+	size_t name_len;
+	int depth;
 	int rc;
 
-	/* Record original offset (for debugging) */
-	orig_offset = offset;
+	/* Determine length of name (may be terminated with NUL or '/') */
+	sep = strchr ( name, '/' );
+	name_len = ( sep ? ( ( size_t ) ( sep - name ) ) : strlen ( name ) );
 
-	/* Initialise cursor */
-	pos.offset = offset;
-	pos.depth = -1;
+	/* Enter node */
+	if ( ( rc = fdt_enter ( fdt, offset, &desc ) ) != 0 )
+		return rc;
 
 	/* Find child node */
-	while ( 1 ) {
+	for ( depth = 0 ; depth >= 0 ; depth += desc.depth ) {
 
-		/* Record current offset */
-		*child = pos.offset;
-
-		/* Traverse tree */
-		if ( ( rc = fdt_traverse ( fdt, &pos, &desc ) ) != 0 ) {
-			DBGC2 ( fdt, "FDT +%#04x has no child node \"%s\": "
-				"%s\n", orig_offset, name, strerror ( rc ) );
+		/* Describe token */
+		if ( ( rc = fdt_next ( fdt, &desc ) ) != 0 ) {
+			DBGC ( fdt, "FDT +%#04x has malformed node: %s\n",
+			       offset, strerror ( rc ) );
 			return rc;
 		}
 
 		/* Check for matching immediate child node */
-		if ( ( pos.depth == 1 ) && desc.name && ( ! desc.data ) ) {
-			DBGC2 ( fdt, "FDT +%#04x has child node \"%s\"\n",
-				orig_offset, desc.name );
-			if ( strcmp ( name, desc.name ) == 0 ) {
-				DBGC2 ( fdt, "FDT +%#04x found child node "
-					"\"%s\" at +%#04x\n", orig_offset,
-					desc.name, *child );
+		if ( ( depth == 0 ) && desc.name && ( ! desc.data ) ) {
+			DBGC2 ( fdt, "FDT +%#04x has child node \"%s\" at "
+				"+%#04x\n", offset, desc.name, desc.offset );
+			assert ( desc.depth > 0 );
+			if ( ( strlen ( desc.name ) == name_len ) &&
+			     ( memcmp ( name, desc.name, name_len ) == 0 ) ) {
+				*child = desc.offset;
 				return 0;
 			}
 		}
 	}
+
+	DBGC2 ( fdt, "FDT +%#04x has no child node \"%s\"\n", offset, name );
+	return -ENOENT;
 }
 
 /**
@@ -247,38 +273,29 @@ static int fdt_child ( struct fdt *fdt, unsigned int offset, const char *name,
  */
 static int fdt_end ( struct fdt *fdt, unsigned int offset,
 		     unsigned int *end ) {
-	struct fdt_cursor pos;
 	struct fdt_descriptor desc;
-	unsigned int orig_offset;
+	int depth;
 	int rc;
 
-	/* Record original offset (for debugging) */
-	orig_offset = offset;
+	/* Enter node */
+	if ( ( rc = fdt_enter ( fdt, offset, &desc ) ) != 0 )
+		return rc;
 
-	/* Initialise cursor */
-	pos.offset = offset;
-	pos.depth = 0;
+	/* Find end of this node */
+	for ( depth = 0 ; depth >= 0 ; depth += desc.depth ) {
 
-	/* Find child node */
-	while ( 1 ) {
-
-		/* Record current offset */
-		*end = pos.offset;
-
-		/* Traverse tree */
-		if ( ( rc = fdt_traverse ( fdt, &pos, &desc ) ) != 0 ) {
+		/* Describe token */
+		if ( ( rc = fdt_next ( fdt, &desc ) ) != 0 ) {
 			DBGC ( fdt, "FDT +%#04x has malformed node: %s\n",
-			       orig_offset, strerror ( rc ) );
+			       offset, strerror ( rc ) );
 			return rc;
 		}
-
-		/* Check for end of current node */
-		if ( pos.depth == 0 ) {
-			DBGC2 ( fdt, "FDT +%#04x has end at +%#04x\n",
-				orig_offset, *end );
-			return 0;
-		}
 	}
+
+	/* Record end offset */
+	*end = desc.offset;
+	DBGC2 ( fdt, "FDT +%#04x has end at +%#04x\n", offset, *end );
+	return 0;
 }
 
 /**
@@ -290,35 +307,31 @@ static int fdt_end ( struct fdt *fdt, unsigned int offset,
  * @ret rc		Return status code
  */
 int fdt_path ( struct fdt *fdt, const char *path, unsigned int *offset ) {
-	char *tmp = ( ( char * ) path );
-	char *del;
+	const char *tmp = path;
 	int rc;
 
 	/* Initialise offset */
 	*offset = 0;
 
 	/* Traverse tree one path segment at a time */
-	while ( *tmp ) {
+	while ( 1 ) {
 
 		/* Skip any leading '/' */
 		while ( *tmp == '/' )
 			tmp++;
 
-		/* Find next '/' delimiter and convert to NUL */
-		del = strchr ( tmp, '/' );
-		if ( del )
-			*del = '\0';
+		/* Terminate if there are no more path components */
+		if ( ! *tmp )
+			break;
 
-		/* Find child and restore delimiter */
-		rc = fdt_child ( fdt, *offset, tmp, offset );
-		if ( del )
-			*del = '/';
-		if ( rc != 0 )
+		/* Find child */
+		if ( ( rc = fdt_child ( fdt, *offset, tmp, offset ) ) != 0 )
 			return rc;
 
 		/* Move to next path component, if any */
-		while ( *tmp && ( *tmp != '/' ) )
-			tmp++;
+		tmp = strchr ( tmp, '/' );
+		if ( ! tmp )
+			break;
 	}
 
 	DBGC2 ( fdt, "FDT found path \"%s\" at +%#04x\n", path, *offset );
@@ -359,40 +372,83 @@ int fdt_alias ( struct fdt *fdt, const char *name, unsigned int *offset ) {
  * @v fdt		Device tree
  * @v offset		Starting node offset
  * @v name		Property name
- * @v desc		Lexical descriptor to fill in
+ * @v desc		Token descriptor to fill in
  * @ret rc		Return status code
  */
 static int fdt_property ( struct fdt *fdt, unsigned int offset,
 			  const char *name, struct fdt_descriptor *desc ) {
-	struct fdt_cursor pos;
+	int depth;
 	int rc;
 
-	/* Initialise cursor */
-	pos.offset = offset;
-	pos.depth = -1;
+	/* Enter node */
+	if ( ( rc = fdt_enter ( fdt, offset, desc ) ) != 0 )
+		return rc;
 
 	/* Find property */
-	while ( 1 ) {
+	for ( depth = 0 ; depth == 0 ; depth += desc->depth ) {
 
-		/* Traverse tree */
-		if ( ( rc = fdt_traverse ( fdt, &pos, desc ) ) != 0 ) {
-			DBGC2 ( fdt, "FDT +%#04x has no property \"%s\": %s\n",
-				offset, name, strerror ( rc ) );
+		/* Describe token */
+		if ( ( rc = fdt_next ( fdt, desc ) ) != 0 ) {
+			DBGC ( fdt, "FDT +%#04x has malformed node: %s\n",
+			       offset, strerror ( rc ) );
 			return rc;
 		}
 
 		/* Check for matching immediate child property */
-		if ( ( pos.depth == 0 ) && desc->data ) {
-			DBGC2 ( fdt, "FDT +%#04x has property \"%s\" len "
-				"%#zx\n", offset, desc->name, desc->len );
+		if ( desc->data ) {
+			DBGC2 ( fdt, "FDT +%#04x has property \"%s\" at "
+				"+%#04x len %#zx\n", offset, desc->name,
+				desc->offset, desc->len );
+			assert ( desc->depth == 0 );
 			if ( strcmp ( name, desc->name ) == 0 ) {
-				DBGC2 ( fdt, "FDT +%#04x found property "
-					"\"%s\"\n", offset, desc->name );
 				DBGC2_HDA ( fdt, 0, desc->data, desc->len );
 				return 0;
 			}
 		}
 	}
+
+	DBGC2 ( fdt, "FDT +%#04x has no property \"%s\"\n", offset, name );
+	return -ENOENT;
+}
+
+/**
+ * Find strings property
+ *
+ * @v fdt		Device tree
+ * @v offset		Starting node offset
+ * @v name		Property name
+ * @v count		String count to fill in
+ * @ret string		String property, or NULL on error
+ */
+const char * fdt_strings ( struct fdt *fdt, unsigned int offset,
+			   const char *name, unsigned int *count ) {
+	struct fdt_descriptor desc;
+	const char *data;
+	size_t len;
+	int rc;
+
+	/* Return a zero count on error */
+	*count = 0;
+
+	/* Find property */
+	if ( ( rc = fdt_property ( fdt, offset, name, &desc ) ) != 0 )
+		return NULL;
+
+	/* Check NUL termination */
+	data = desc.data;
+	if ( desc.len && ( data[ desc.len - 1 ] != '\0' ) ) {
+		DBGC ( fdt, "FDT unterminated string property \"%s\"\n",
+		       name );
+		return NULL;
+	}
+
+	/* Count number of strings */
+	for ( len = desc.len ; len-- ; ) {
+		if ( data[len] == '\0' )
+			(*count)++;
+	}
+
+	return data;
 }
 
 /**
@@ -405,25 +461,62 @@ static int fdt_property ( struct fdt *fdt, unsigned int offset,
  */
 const char * fdt_string ( struct fdt *fdt, unsigned int offset,
 			  const char *name ) {
-	struct fdt_descriptor desc;
-	int rc;
+	unsigned int count;
 
-	/* Find property */
-	if ( ( rc = fdt_property ( fdt, offset, name, &desc ) ) != 0 )
-		return NULL;
-
-	/* Check NUL termination */
-	if ( strnlen ( desc.data, desc.len ) == desc.len ) {
-		DBGC ( fdt, "FDT unterminated string property \"%s\"\n",
-		       name );
-		return NULL;
-	}
-
-	return desc.data;
+	/* Find strings property */
+	return fdt_strings ( fdt, offset, name, &count );
 }
 
 /**
- * Find integer property
+ * Get integer property
+ *
+ * @v fdt		Device tree
+ * @v offset		Starting node offset
+ * @v name		Property name
+ * @v index		Starting cell index
+ * @v count		Number of cells (or 0 to read all remaining cells)
+ * @v value		Integer value to fill in
+ * @ret rc		Return status code
+ */
+int fdt_cells ( struct fdt *fdt, unsigned int offset, const char *name,
+		unsigned int index, unsigned int count, uint64_t *value ) {
+	struct fdt_descriptor desc;
+	const uint32_t *cell;
+	unsigned int total;
+	int rc;
+
+	/* Clear value */
+	*value = 0;
+
+	/* Find property */
+	if ( ( rc = fdt_property ( fdt, offset, name, &desc ) ) != 0 )
+		return rc;
+	cell = desc.data;
+
+	/* Determine number of cells */
+	total = ( desc.len / sizeof ( *cell ) );
+	if ( ( index > total ) || ( count > ( total - index ) ) ) {
+		DBGC ( fdt, "FDT truncated integer \"%s\"\n", name );
+		return -ERANGE;
+	}
+	if ( ! count )
+		count = ( total - index );
+	if ( count > ( sizeof ( *value ) / sizeof ( *cell ) ) ) {
+		DBGC ( fdt, "FDT overlength integer \"%s\"\n", name );
+		return -ERANGE;
+	}
+
+	/* Read value */
+	for ( cell += index ; count ; cell++, count-- ) {
+		*value <<= 32;
+		*value |= be32_to_cpu ( *cell );
+	}
+
+	return 0;
+}
+
+/**
+ * Get 64-bit integer property
  *
  * @v fdt		Device tree
  * @v offset		Starting node offset
@@ -433,30 +526,38 @@ const char * fdt_string ( struct fdt *fdt, unsigned int offset,
  */
 int fdt_u64 ( struct fdt *fdt, unsigned int offset, const char *name,
 	      uint64_t *value ) {
-	struct fdt_descriptor desc;
-	const uint8_t *data;
-	size_t remaining;
 	int rc;
 
-	/* Clear value */
-	*value = 0;
+	/* Read value */
+	if ( ( rc = fdt_cells ( fdt, offset, name, 0, 0, value ) ) != 0 )
+		return rc;
 
-	/* Find property */
-	if ( ( rc = fdt_property ( fdt, offset, name, &desc ) ) != 0 )
+	return 0;
+}
+
+/**
+ * Get 32-bit integer property
+ *
+ * @v fdt		Device tree
+ * @v offset		Starting node offset
+ * @v name		Property name
+ * @v value		Integer value to fill in
+ * @ret rc		Return status code
+ */
+int fdt_u32 ( struct fdt *fdt, unsigned int offset, const char *name,
+	      uint32_t *value ) {
+	uint64_t value64;
+	int rc;
+
+	/* Read value */
+	if ( ( rc = fdt_u64 ( fdt, offset, name, &value64 ) ) != 0 )
 		return rc;
 
 	/* Check range */
-	if ( desc.len > sizeof ( *value ) ) {
-		DBGC ( fdt, "FDT oversized integer property \"%s\"\n", name );
+	*value = value64;
+	if ( *value != value64 ) {
+		DBGC ( fdt, "FDT overlength 32-bit integer \"%s\"\n", name );
 		return -ERANGE;
-	}
-
-	/* Parse value */
-	data = desc.data;
-	remaining = desc.len;
-	while ( remaining-- ) {
-		*value <<= 8;
-		*value |= *(data++);
 	}
 
 	return 0;
@@ -861,7 +962,6 @@ static int fdt_ensure_property ( struct fdt *fdt, unsigned int offset,
 				 const char *name, const void *data,
 				 size_t len ) {
 	struct fdt_descriptor desc;
-	struct fdt_cursor pos;
 	struct {
 		fdt_token_t token;
 		struct fdt_prop prop;
@@ -876,15 +976,14 @@ static int fdt_ensure_property ( struct fdt *fdt, unsigned int offset,
 	if ( ( rc = fdt_property ( fdt, offset, name, &desc ) ) == 0 ) {
 
 		/* Reuse existing name */
-		pos.offset = desc.offset;
-		hdr = ( fdt->raw + fdt->structure + pos.offset );
+		hdr = ( fdt->raw + fdt->structure + desc.offset );
 		string = be32_to_cpu ( hdr->prop.name_off );
 
 		/* Erase existing property */
 		erase = ( sizeof ( *hdr ) + desc.len );
 		erase = ( ( erase + FDT_STRUCTURE_ALIGN - 1 ) &
 			  ~( FDT_STRUCTURE_ALIGN - 1 ) );
-		fdt_nop ( fdt, pos.offset, erase );
+		fdt_nop ( fdt, desc.offset, erase );
 		DBGC2 ( fdt, "FDT +%#04x erased property \"%s\"\n",
 			offset, name );
 
@@ -898,22 +997,21 @@ static int fdt_ensure_property ( struct fdt *fdt, unsigned int offset,
 			return rc;
 
 		/* Enter node */
-		pos.offset = offset;
-		pos.depth = 0;
-		if ( ( rc = fdt_traverse ( fdt, &pos, &desc ) ) != 0 )
+		if ( ( rc = fdt_enter ( fdt, offset, &desc ) ) != 0 )
 			return rc;
-		assert ( pos.depth == 1 );
+		assert ( desc.depth > 0 );
+		desc.offset = desc.next;
 
 		/* Calculate insertion length */
 		insert = ( sizeof ( *hdr ) + len );
 	}
 
 	/* Insert space */
-	if ( ( rc = fdt_insert_nop ( fdt, pos.offset, insert ) ) != 0 )
+	if ( ( rc = fdt_insert_nop ( fdt, desc.offset, insert ) ) != 0 )
 		return rc;
 
 	/* Construct property */
-	hdr = ( fdt->raw + fdt->structure + pos.offset );
+	hdr = ( fdt->raw + fdt->structure + desc.offset );
 	hdr->token = cpu_to_be32 ( FDT_PROP );
 	hdr->prop.len = cpu_to_be32 ( len );
 	hdr->prop.name_off = cpu_to_be32 ( string );
@@ -1049,8 +1147,8 @@ void fdt_remove ( struct fdt_header *hdr ) {
 	ufree ( virt_to_user ( hdr ) );
 }
 
-/* Drag in objects via fdt_traverse() */
-REQUIRING_SYMBOL ( fdt_traverse );
+/* Drag in objects via fdt_describe() */
+REQUIRING_SYMBOL ( fdt_describe );
 
 /* Drag in device tree configuration */
 REQUIRE_OBJECT ( config_fdt );
