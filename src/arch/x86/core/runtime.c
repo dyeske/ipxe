@@ -124,8 +124,8 @@ static int cmdline_init ( void ) {
 		DBGC ( colour, "RUNTIME found no command line\n" );
 		return 0;
 	}
-	cmdline_user = phys_to_user ( cmdline_phys );
-	len = ( strlen_user ( cmdline_user, 0 ) + 1 /* NUL */ );
+	cmdline_user = phys_to_virt ( cmdline_phys );
+	len = ( strlen ( cmdline_user ) + 1 /* NUL */ );
 
 	/* Allocate and copy command line */
 	cmdline_copy = malloc ( len );
@@ -193,7 +193,7 @@ static int initrd_init ( void ) {
 	       initrd_phys, ( initrd_phys + initrd_len ) );
 
 	/* Create initrd image */
-	image = image_memory ( "<INITRD>", phys_to_user ( initrd_phys ),
+	image = image_memory ( "<INITRD>", phys_to_virt ( initrd_phys ),
 			       initrd_len );
 	if ( ! image ) {
 		DBGC ( colour, "RUNTIME could not create initrd image\n" );

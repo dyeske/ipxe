@@ -90,7 +90,7 @@ static uint16_t comboot_graphics_mode = 0;
 static void print_user_string ( unsigned int segment, unsigned int offset, char terminator ) {
 	int i = 0;
 	char c;
-	userptr_t str = real_to_user ( segment, offset );
+	userptr_t str = real_to_virt ( segment, offset );
 	for ( ; ; ) {
 		copy_from_user ( &c, str, i, 1 );
 		if ( c == terminator ) break;
@@ -109,17 +109,17 @@ static void shuffle ( unsigned int list_segment, unsigned int list_offset, unsig
 	unsigned int i;
 
 	/* Copy shuffle descriptor list so it doesn't get overwritten */
-	copy_from_user ( shuf, real_to_user ( list_segment, list_offset ), 0,
+	copy_from_user ( shuf, real_to_virt ( list_segment, list_offset ), 0,
 	                 count * sizeof( comboot_shuffle_descriptor ) );
 
 	/* Do the copies */
 	for ( i = 0; i < count; i++ ) {
-		userptr_t src_u = phys_to_user ( shuf[ i ].src );
-		userptr_t dest_u = phys_to_user ( shuf[ i ].dest );
+		userptr_t src_u = phys_to_virt ( shuf[ i ].src );
+		userptr_t dest_u = phys_to_virt ( shuf[ i ].dest );
 
 		if ( shuf[ i ].src == 0xFFFFFFFF ) {
 			/* Fill with 0 instead of copying */
-			memset_user ( dest_u, 0, 0, shuf[ i ].len );
+			memset ( dest_u, 0, shuf[ i ].len );
 		} else if ( shuf[ i ].dest == 0xFFFFFFFF ) {
 			/* Copy new list of descriptors */
 			count = shuf[ i ].len / sizeof( comboot_shuffle_descriptor );
@@ -128,7 +128,7 @@ static void shuffle ( unsigned int list_segment, unsigned int list_offset, unsig
 			i = -1;
 		} else {
 			/* Regular copy */
-			memmove_user ( dest_u, 0, src_u, 0, shuf[ i ].len );
+			memmove ( dest_u, src_u, shuf[ i ].len );
 		}
 	}
 }
@@ -346,8 +346,8 @@ static __asmcall __used void int22 ( struct i386_all_regs *ix86 ) {
 
 	case 0x0003: /* Run command */
 		{
-			userptr_t cmd_u = real_to_user ( ix86->segs.es, ix86->regs.bx );
-			int len = strlen_user ( cmd_u, 0 );
+			userptr_t cmd_u = real_to_virt ( ix86->segs.es, ix86->regs.bx );
+			int len = strlen ( cmd_u );
 			char cmd[len + 1];
 			copy_from_user ( cmd, cmd_u, 0, len + 1 );
 			DBG ( "COMBOOT: executing command '%s'\n", cmd );
@@ -370,8 +370,8 @@ static __asmcall __used void int22 ( struct i386_all_regs *ix86 ) {
 	case 0x0006: /* Open file */
 		{
 			int fd;
-			userptr_t file_u = real_to_user ( ix86->segs.es, ix86->regs.si );
-			int len = strlen_user ( file_u, 0 );
+			userptr_t file_u = real_to_virt ( ix86->segs.es, ix86->regs.si );
+			int len = strlen ( file_u );
 			char file[len + 1];
 
 			copy_from_user ( file, file_u, 0, len + 1 );
@@ -410,7 +410,8 @@ static __asmcall __used void int22 ( struct i386_all_regs *ix86 ) {
 			int len = ix86->regs.cx * COMBOOT_FILE_BLOCKSZ;
 			int rc;
 			fd_set fds;
-			userptr_t buf = real_to_user ( ix86->segs.es, ix86->regs.bx );
+			void *buf = real_to_virt ( ix86->segs.es,
+						   ix86->regs.bx );
 
 			/* Wait for data ready to read */
 			FD_ZERO ( &fds );
@@ -418,7 +419,7 @@ static __asmcall __used void int22 ( struct i386_all_regs *ix86 ) {
 
 			select ( &fds, 1 );
 
-			rc = read_user ( fd, buf, 0, len );
+			rc = read ( fd, buf, len );
 			if ( rc < 0 ) {
 				DBG ( "COMBOOT: read failed\n" );
 				ix86->regs.si = 0;
@@ -483,8 +484,8 @@ static __asmcall __used void int22 ( struct i386_all_regs *ix86 ) {
 
 	case 0x0010: /* Resolve hostname */
 		{
-			userptr_t hostname_u = real_to_user ( ix86->segs.es, ix86->regs.bx );
-			int len = strlen_user ( hostname_u, 0 );
+			userptr_t hostname_u = real_to_virt ( ix86->segs.es, ix86->regs.bx );
+			int len = strlen ( hostname_u );
 			char hostname[len];
 			struct in_addr addr;
 
@@ -549,10 +550,10 @@ static __asmcall __used void int22 ( struct i386_all_regs *ix86 ) {
 
 	case 0x0016: /* Run kernel image */
 		{
-			userptr_t file_u = real_to_user ( ix86->segs.ds, ix86->regs.si );
-			userptr_t cmd_u = real_to_user ( ix86->segs.es, ix86->regs.bx );
-			int file_len = strlen_user ( file_u, 0 );
-			int cmd_len = strlen_user ( cmd_u, 0 );
+			userptr_t file_u = real_to_virt ( ix86->segs.ds, ix86->regs.si );
+			userptr_t cmd_u = real_to_virt ( ix86->segs.es, ix86->regs.bx );
+			int file_len = strlen ( file_u );
+			int cmd_len = strlen ( cmd_u );
 			char file[file_len + 1];
 			char cmd[cmd_len + 1];
 
@@ -595,9 +596,9 @@ static __asmcall __used void int22 ( struct i386_all_regs *ix86 ) {
 		shuffle ( ix86->segs.es, ix86->regs.di, ix86->regs.cx );
 
 		/* Copy initial register values to .text16 */
-		memcpy_user ( real_to_user ( rm_cs, (unsigned) __from_text16 ( &comboot_initial_regs ) ), 0,
-		              real_to_user ( ix86->segs.ds, ix86->regs.si ), 0,
-		              sizeof(syslinux_rm_regs) );
+		memcpy ( real_to_virt ( rm_cs, (unsigned) __from_text16 ( &comboot_initial_regs ) ),
+			 real_to_virt ( ix86->segs.ds, ix86->regs.si ),
+			 sizeof(syslinux_rm_regs) );
 
 		/* Load initial register values */
 		__asm__ __volatile__ (

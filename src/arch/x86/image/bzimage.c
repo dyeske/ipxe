@@ -158,7 +158,7 @@ static int bzimage_parse_header ( struct image *image,
 
 	/* Calculate load address of real-mode portion */
 	bzimg->rm_kernel_seg = ( is_bzimage ? 0x1000 : 0x9000 );
-	bzimg->rm_kernel = real_to_user ( bzimg->rm_kernel_seg, 0 );
+	bzimg->rm_kernel = real_to_virt ( bzimg->rm_kernel_seg, 0 );
 
 	/* Allow space for the stack and heap */
 	bzimg->rm_memsz += BZI_STACK_SIZE;
@@ -169,7 +169,7 @@ static int bzimage_parse_header ( struct image *image,
 	bzimg->rm_memsz += BZI_CMDLINE_SIZE;
 
 	/* Calculate load address of protected-mode portion */
-	bzimg->pm_kernel = phys_to_user ( is_bzimage ? BZI_LOAD_HIGH_ADDR
+	bzimg->pm_kernel = phys_to_virt ( is_bzimage ? BZI_LOAD_HIGH_ADDR
 					: BZI_LOAD_LOW_ADDR );
 
 	/* Extract video mode */
@@ -185,8 +185,8 @@ static int bzimage_parse_header ( struct image *image,
 
 	DBGC ( image, "bzImage %p version %04x RM %#lx+%#zx PM %#lx+%#zx "
 	       "cmdlen %zd\n", image, bzimg->version,
-	       user_to_phys ( bzimg->rm_kernel, 0 ), bzimg->rm_filesz,
-	       user_to_phys ( bzimg->pm_kernel, 0 ), bzimg->pm_sz,
+	       virt_to_phys ( bzimg->rm_kernel ), bzimg->rm_filesz,
+	       virt_to_phys ( bzimg->pm_kernel ), bzimg->pm_sz,
 	       bzimg->cmdline_size );
 
 	return 0;
@@ -215,8 +215,8 @@ static void bzimage_update_header ( struct image *image,
 
 	/* Set command line */
 	if ( bzimg->version >= 0x0202 ) {
-		bzimg->bzhdr.cmd_line_ptr = user_to_phys ( bzimg->rm_kernel,
-							   bzimg->rm_cmdline );
+		bzimg->bzhdr.cmd_line_ptr = ( virt_to_phys ( bzimg->rm_kernel )
+					      + bzimg->rm_cmdline );
 	} else {
 		bzimg->cmdline_magic.magic = BZI_CMDLINE_MAGIC;
 		bzimg->cmdline_magic.offset = bzimg->rm_cmdline;
@@ -369,8 +369,8 @@ static size_t bzimage_load_initrd ( struct image *image,
 
 	/* Copy in initrd image body and construct any cpio headers */
 	if ( address ) {
-		memmove_user ( address, len, initrd->data, 0, initrd->len );
-		memset_user ( address, 0, 0, len );
+		memmove ( ( address + len ), initrd->data, initrd->len );
+		memset ( address, 0, len );
 		offset = 0;
 		for ( i = 0 ; ( cpio_len = cpio_header ( initrd, i, &cpio ) ) ;
 		      i++ ) {
@@ -383,19 +383,19 @@ static size_t bzimage_load_initrd ( struct image *image,
 		}
 		assert ( offset == len );
 		DBGC ( image, "bzImage %p initrd %p [%#08lx,%#08lx,%#08lx)"
-		       "%s%s\n", image, initrd, user_to_phys ( address, 0 ),
-		       user_to_phys ( address, offset ),
-		       user_to_phys ( address, ( offset + initrd->len ) ),
+		       "%s%s\n", image, initrd, virt_to_phys ( address ),
+		       ( virt_to_phys ( address ) + offset ),
+		       ( virt_to_phys ( address ) + offset + initrd->len ),
 		       ( filename ? " " : "" ), ( filename ? filename : "" ) );
-		DBGC2_MD5A ( image, user_to_phys ( address, offset ),
-			     user_to_virt ( address, offset ), initrd->len );
+		DBGC2_MD5A ( image, ( virt_to_phys ( address ) + offset ),
+			     ( address + offset ), initrd->len );
 	}
 	len += initrd->len;
 
 	/* Zero-pad to next INITRD_ALIGN boundary */
 	pad_len = ( ( -len ) & ( INITRD_ALIGN - 1 ) );
 	if ( address )
-		memset_user ( address, len, 0, pad_len );
+		memset ( ( address + len ), 0, pad_len );
 
 	return len;
 }
@@ -422,16 +422,16 @@ static int bzimage_check_initrds ( struct image *image,
 		len = bzimage_align ( len );
 
 		DBGC ( image, "bzImage %p initrd %p from [%#08lx,%#08lx)%s%s\n",
-		       image, initrd, user_to_phys ( initrd->data, 0 ),
-		       user_to_phys ( initrd->data, initrd->len ),
+		       image, initrd, virt_to_phys ( initrd->data ),
+		       ( virt_to_phys ( initrd->data ) + initrd->len ),
 		       ( initrd->cmdline ? " " : "" ),
 		       ( initrd->cmdline ? initrd->cmdline : "" ) );
-		DBGC2_MD5A ( image, user_to_phys ( initrd->data, 0 ),
-			     user_to_virt ( initrd->data, 0 ), initrd->len );
+		DBGC2_MD5A ( image, virt_to_phys ( initrd->data ),
+			     initrd->data, initrd->len );
 	}
 
 	/* Calculate lowest usable address */
-	bottom = userptr_add ( bzimg->pm_kernel, bzimg->pm_sz );
+	bottom = ( bzimg->pm_kernel + bzimg->pm_sz );
 
 	/* Check that total length fits within space available for
 	 * reshuffling.  This is a conservative check, since CPIO
@@ -445,7 +445,7 @@ static int bzimage_check_initrds ( struct image *image,
 	}
 
 	/* Check that total length fits within kernel's memory limit */
-	if ( user_to_phys ( bottom, len ) > bzimg->mem_limit ) {
+	if ( ( virt_to_phys ( bottom ) + len ) > bzimg->mem_limit ) {
 		DBGC ( image, "bzImage %p not enough space for initrds\n",
 		       image );
 		return -ENOBUFS;
@@ -471,14 +471,12 @@ static void bzimage_load_initrds ( struct image *image,
 	size_t len;
 
 	/* Reshuffle initrds into desired order */
-	initrd_reshuffle ( userptr_add ( bzimg->pm_kernel, bzimg->pm_sz ) );
+	initrd_reshuffle ( bzimg->pm_kernel + bzimg->pm_sz );
 
 	/* Find highest initrd */
 	for_each_image ( initrd ) {
-		if ( ( highest == NULL ) ||
-		     ( userptr_sub ( initrd->data, highest->data ) > 0 ) ) {
+		if ( ( highest == NULL ) || ( initrd->data > highest->data ) )
 			highest = initrd;
-		}
 	}
 
 	/* Do nothing if there are no initrds */
@@ -486,13 +484,13 @@ static void bzimage_load_initrds ( struct image *image,
 		return;
 
 	/* Find highest usable address */
-	top = userptr_add ( highest->data, bzimage_align ( highest->len ) );
-	if ( user_to_phys ( top, -1 ) > bzimg->mem_limit ) {
-		top = phys_to_user ( ( bzimg->mem_limit + 1 ) &
+	top = ( highest->data + bzimage_align ( highest->len ) );
+	if ( ( virt_to_phys ( top ) - 1UL ) > bzimg->mem_limit ) {
+		top = phys_to_virt ( ( bzimg->mem_limit + 1 ) &
 				     ~( INITRD_ALIGN - 1 ) );
 	}
 	DBGC ( image, "bzImage %p loading initrds from %#08lx downwards\n",
-	       image, user_to_phys ( top, -1 ) );
+	       image, ( virt_to_phys ( top ) - 1UL ) );
 
 	/* Load initrds in order */
 	for_each_image ( initrd ) {
@@ -509,13 +507,13 @@ static void bzimage_load_initrds ( struct image *image,
 		}
 
 		/* Load initrd at this address */
-		dest = userptr_add ( top, -offset );
+		dest = ( top - offset );
 		len = bzimage_load_initrd ( image, initrd, dest );
 
 		/* Record initrd location */
 		if ( ! bzimg->ramdisk_image )
-			bzimg->ramdisk_image = user_to_phys ( dest, 0 );
-		bzimg->ramdisk_size = ( user_to_phys ( dest, len ) -
+			bzimg->ramdisk_image = virt_to_phys ( dest );
+		bzimg->ramdisk_size = ( virt_to_phys ( dest ) + len -
 					bzimg->ramdisk_image );
 	}
 	DBGC ( image, "bzImage %p initrds at [%#08lx,%#08lx)\n",
@@ -564,10 +562,9 @@ static int bzimage_exec ( struct image *image ) {
 	unregister_image ( image_get ( image ) );
 
 	/* Load segments */
-	memcpy_user ( bzimg.rm_kernel, 0, image->data,
-		      0, bzimg.rm_filesz );
-	memcpy_user ( bzimg.pm_kernel, 0, image->data,
-		      bzimg.rm_filesz, bzimg.pm_sz );
+	memcpy ( bzimg.rm_kernel, image->data, bzimg.rm_filesz );
+	memcpy ( bzimg.pm_kernel, ( image->data + bzimg.rm_filesz ),
+		 bzimg.pm_sz );
 
 	/* Store command line */
 	bzimage_set_cmdline ( image, &bzimg );

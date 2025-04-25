@@ -61,10 +61,9 @@ static userptr_t initrd_squash_high ( userptr_t top ) {
 		/* Find the highest image not yet in its final position */
 		highest = NULL;
 		for_each_image ( initrd ) {
-			if ( ( userptr_sub ( initrd->data, current ) < 0 ) &&
+			if ( ( initrd->data < current ) &&
 			     ( ( highest == NULL ) ||
-			       ( userptr_sub ( initrd->data,
-					       highest->data ) > 0 ) ) ) {
+			       ( initrd->data > highest->data ) ) ) {
 				highest = initrd;
 			}
 		}
@@ -74,31 +73,30 @@ static userptr_t initrd_squash_high ( userptr_t top ) {
 		/* Move this image to its final position */
 		len = ( ( highest->len + INITRD_ALIGN - 1 ) &
 			~( INITRD_ALIGN - 1 ) );
-		current = userptr_sub ( current, len );
+		current -= len;
 		DBGC ( &images, "INITRD squashing %s [%#08lx,%#08lx)->"
 		       "[%#08lx,%#08lx)\n", highest->name,
-		       user_to_phys ( highest->data, 0 ),
-		       user_to_phys ( highest->data, highest->len ),
-		       user_to_phys ( current, 0 ),
-		       user_to_phys ( current, highest->len ) );
-		memmove_user ( current, 0, highest->data, 0, highest->len );
+		       virt_to_phys ( highest->data ),
+		       ( virt_to_phys ( highest->data ) + highest->len ),
+		       virt_to_phys ( current ),
+		       ( virt_to_phys ( current ) + highest->len ) );
+		memmove ( current, highest->data, highest->len );
 		highest->data = current;
 	}
 
 	/* Copy any remaining initrds (e.g. embedded images) to the region */
 	for_each_image ( initrd ) {
-		if ( userptr_sub ( initrd->data, top ) >= 0 ) {
+		if ( initrd->data >= top ) {
 			len = ( ( initrd->len + INITRD_ALIGN - 1 ) &
 				~( INITRD_ALIGN - 1 ) );
-			current = userptr_sub ( current, len );
+			current -= len;
 			DBGC ( &images, "INITRD copying %s [%#08lx,%#08lx)->"
 			       "[%#08lx,%#08lx)\n", initrd->name,
-			       user_to_phys ( initrd->data, 0 ),
-			       user_to_phys ( initrd->data, initrd->len ),
-			       user_to_phys ( current, 0 ),
-			       user_to_phys ( current, initrd->len ) );
-			memcpy_user ( current, 0, initrd->data, 0,
-				      initrd->len );
+			       virt_to_phys ( initrd->data ),
+			       ( virt_to_phys ( initrd->data ) + initrd->len ),
+			       virt_to_phys ( current ),
+			       ( virt_to_phys ( current ) + initrd->len ) );
+			memcpy ( current, initrd->data, initrd->len );
 			initrd->data = current;
 		}
 	}
@@ -121,10 +119,10 @@ static void initrd_swap ( struct image *low, struct image *high,
 	size_t new_len;
 
 	DBGC ( &images, "INITRD swapping %s [%#08lx,%#08lx)<->[%#08lx,%#08lx) "
-	       "%s\n", low->name, user_to_phys ( low->data, 0 ),
-	       user_to_phys ( low->data, low->len ),
-	       user_to_phys ( high->data, 0 ),
-	       user_to_phys ( high->data, high->len ), high->name );
+	       "%s\n", low->name, virt_to_phys ( low->data ),
+	       ( virt_to_phys ( low->data ) + low->len ),
+	       virt_to_phys ( high->data ),
+	       ( virt_to_phys ( high->data ) + high->len ), high->name );
 
 	/* Round down length of free space */
 	free_len &= ~( INITRD_ALIGN - 1 );
@@ -141,15 +139,16 @@ static void initrd_swap ( struct image *low, struct image *high,
 			    ~( INITRD_ALIGN - 1 ) );
 
 		/* Swap fragments */
-		memcpy_user ( free, 0, high->data, len, frag_len );
-		memmove_user ( low->data, new_len, low->data, len, low->len );
-		memcpy_user ( low->data, len, free, 0, frag_len );
+		memcpy ( free, ( high->data + len ), frag_len );
+		memmove ( ( low->data + new_len ), ( low->data + len ),
+			  low->len );
+		memcpy ( ( low->data + len ), free, frag_len );
 		len = new_len;
 	}
 
 	/* Adjust data pointers */
 	high->data = low->data;
-	low->data = userptr_add ( low->data, len );
+	low->data += len;
 }
 
 /**
@@ -171,7 +170,7 @@ static int initrd_swap_any ( userptr_t free, size_t free_len ) {
 		/* Calculate location of adjacent image (if any) */
 		padded_len = ( ( low->len + INITRD_ALIGN - 1 ) &
 			       ~( INITRD_ALIGN - 1 ) );
-		adjacent = userptr_add ( low->data, padded_len );
+		adjacent = ( low->data + padded_len );
 
 		/* Search for adjacent image */
 		for_each_image ( high ) {
@@ -209,10 +208,10 @@ static void initrd_dump ( void ) {
 	/* Dump initrd locations */
 	for_each_image ( initrd ) {
 		DBGC ( &images, "INITRD %s at [%#08lx,%#08lx)\n",
-		       initrd->name, user_to_phys ( initrd->data, 0 ),
-		       user_to_phys ( initrd->data, initrd->len ) );
-		DBGC2_MD5A ( &images, user_to_phys ( initrd->data, 0 ),
-			     user_to_virt ( initrd->data, 0 ), initrd->len );
+		       initrd->name, virt_to_phys ( initrd->data ),
+		       ( virt_to_phys ( initrd->data ) + initrd->len ) );
+		DBGC2_MD5A ( &images, virt_to_phys ( initrd->data ),
+			     initrd->data, initrd->len );
 	}
 }
 
@@ -235,12 +234,12 @@ void initrd_reshuffle ( userptr_t bottom ) {
 
 	/* Calculate limits of available space for initrds */
 	top = initrd_top;
-	if ( userptr_sub ( initrd_bottom, bottom ) > 0 )
+	if ( initrd_bottom > bottom )
 		bottom = initrd_bottom;
 
 	/* Debug */
 	DBGC ( &images, "INITRD region [%#08lx,%#08lx)\n",
-	       user_to_phys ( bottom, 0 ), user_to_phys ( top, 0 ) );
+	       virt_to_phys ( bottom ), virt_to_phys ( top ) );
 	initrd_dump();
 
 	/* Squash initrds as high as possible in memory */
@@ -248,7 +247,7 @@ void initrd_reshuffle ( userptr_t bottom ) {
 
 	/* Calculate available free space */
 	free = bottom;
-	free_len = userptr_sub ( used, free );
+	free_len = ( used - free );
 
 	/* Bubble-sort initrds into desired order */
 	while ( initrd_swap_any ( free, free_len ) ) {}
@@ -270,9 +269,9 @@ int initrd_reshuffle_check ( size_t len, userptr_t bottom ) {
 
 	/* Calculate limits of available space for initrds */
 	top = initrd_top;
-	if ( userptr_sub ( initrd_bottom, bottom ) > 0 )
+	if ( initrd_bottom > bottom )
 		bottom = initrd_bottom;
-	available = userptr_sub ( top, bottom );
+	available = ( top - bottom );
 
 	/* Allow for a sensible minimum amount of free space */
 	len += INITRD_MIN_FREE_LEN;
@@ -296,7 +295,7 @@ static void initrd_startup ( void ) {
 	 * can safely reuse when rearranging).
 	 */
 	len = largest_memblock ( &initrd_bottom );
-	initrd_top = userptr_add ( initrd_bottom, len );
+	initrd_top = ( initrd_bottom + len );
 }
 
 /** initrd startup function */

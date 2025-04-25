@@ -212,7 +212,7 @@ static int multiboot_add_modules ( struct image *image, physaddr_t start,
 		start = ( ( start + 0xfff ) & ~0xfff );
 
 		/* Prepare segment */
-		if ( ( rc = prep_segment ( phys_to_user ( start ),
+		if ( ( rc = prep_segment ( phys_to_virt ( start ),
 					   module_image->len,
 					   module_image->len ) ) != 0 ) {
 			DBGC ( image, "MULTIBOOT %p could not prepare module "
@@ -222,8 +222,8 @@ static int multiboot_add_modules ( struct image *image, physaddr_t start,
 		}
 
 		/* Copy module */
-		memcpy_user ( phys_to_user ( start ), 0,
-			      module_image->data, 0, module_image->len );
+		memcpy ( phys_to_virt ( start ), module_image->data,
+			 module_image->len );
 
 		/* Add module to list */
 		module = &modules[mbinfo->mods_count++];
@@ -342,7 +342,7 @@ static int multiboot_load_raw ( struct image *image,
 		   ( image->len - offset ) );
 	memsz = ( hdr->mb.bss_end_addr ?
 		  ( hdr->mb.bss_end_addr - hdr->mb.load_addr ) : filesz );
-	buffer = phys_to_user ( hdr->mb.load_addr );
+	buffer = phys_to_virt ( hdr->mb.load_addr );
 	if ( ( rc = prep_segment ( buffer, filesz, memsz ) ) != 0 ) {
 		DBGC ( image, "MULTIBOOT %p could not prepare segment: %s\n",
 		       image, strerror ( rc ) );
@@ -350,7 +350,7 @@ static int multiboot_load_raw ( struct image *image,
 	}
 
 	/* Copy image to segment */
-	memcpy_user ( buffer, 0, image->data, offset, filesz );
+	memcpy ( buffer, ( image->data + offset ), filesz );
 
 	/* Record execution entry point and maximum used address */
 	*entry = hdr->mb.entry_addr;

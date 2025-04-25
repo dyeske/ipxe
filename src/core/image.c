@@ -218,7 +218,7 @@ int image_set_cmdline ( struct image *image, const char *cmdline ) {
  * @ret rc		Return status code
  */
 int image_set_len ( struct image *image, size_t len ) {
-	userptr_t new;
+	void *new;
 
 	/* (Re)allocate image data */
 	new = urealloc ( image->data, len );
@@ -238,7 +238,7 @@ int image_set_len ( struct image *image, size_t len ) {
  * @v len		Length of image data
  * @ret rc		Return status code
  */
-int image_set_data ( struct image *image, userptr_t data, size_t len ) {
+int image_set_data ( struct image *image, const void *data, size_t len ) {
 	int rc;
 
 	/* Set image length */
@@ -246,7 +246,7 @@ int image_set_data ( struct image *image, userptr_t data, size_t len ) {
 		return rc;
 
 	/* Copy in new image data */
-	memcpy_user ( image->data, 0, data, 0, len );
+	memcpy ( image->data, data, len );
 
 	return 0;
 }
@@ -300,8 +300,8 @@ int register_image ( struct image *image ) {
 	image->flags |= IMAGE_REGISTERED;
 	list_add_tail ( &image->list, &images );
 	DBGC ( image, "IMAGE %s at [%lx,%lx) registered\n",
-	       image->name, user_to_phys ( image->data, 0 ),
-	       user_to_phys ( image->data, image->len ) );
+	       image->name, virt_to_phys ( image->data ),
+	       ( virt_to_phys ( image->data ) + image->len ) );
 
 	/* Try to detect image type, if applicable.  Ignore failures,
 	 * since we expect to handle some unrecognised images
@@ -566,7 +566,8 @@ int image_set_trust ( int require_trusted, int permanent ) {
  * @v len		Length
  * @ret image		Image, or NULL on error
  */
-struct image * image_memory ( const char *name, userptr_t data, size_t len ) {
+struct image * image_memory ( const char *name, const void *data,
+			      size_t len ) {
 	struct image *image;
 	int rc;
 

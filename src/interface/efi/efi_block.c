@@ -95,8 +95,9 @@ struct efi_block_data {
 static int efi_block_rw ( struct san_device *sandev, uint64_t lba,
 			  void *data, size_t len,
 			  int ( * sandev_rw ) ( struct san_device *sandev,
-						uint64_t lba, unsigned int count,
-						userptr_t buffer ) ) {
+						uint64_t lba,
+						unsigned int count,
+						void *buffer ) ) {
 	struct efi_block_data *block = sandev->priv;
 	unsigned int count;
 	int rc;
@@ -110,8 +111,7 @@ static int efi_block_rw ( struct san_device *sandev, uint64_t lba,
 	}
 
 	/* Read from / write to block device */
-	if ( ( rc = sandev_rw ( sandev, lba, count,
-				virt_to_user ( data ) ) ) != 0 ) {
+	if ( ( rc = sandev_rw ( sandev, lba, count, data ) ) != 0 ) {
 		DBGC ( sandev->drive, "EFIBLK %#02x I/O failed: %s\n",
 		       sandev->drive, strerror ( rc ) );
 		return rc;

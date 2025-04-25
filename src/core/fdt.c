@@ -734,8 +734,7 @@ static int fdt_parse_image ( struct fdt *fdt, struct image *image ) {
 	int rc;
 
 	/* Parse image */
-	if ( ( rc = fdt_parse ( fdt, user_to_virt ( image->data, 0 ),
-				image->len ) ) != 0 ) {
+	if ( ( rc = fdt_parse ( fdt, image->data, image->len ) ) != 0 ) {
 		DBGC ( fdt, "FDT image \"%s\" is invalid: %s\n",
 		       image->name, strerror ( rc ) );
 		return rc;
@@ -1038,7 +1037,7 @@ static int fdt_urealloc ( struct fdt *fdt, size_t len ) {
 	assert ( len >= fdt->used );
 
 	/* Attempt reallocation */
-	new = user_to_virt ( urealloc ( virt_to_user ( fdt->raw ), len ), 0 );
+	new = urealloc ( fdt->raw, len );
 	if ( ! new ) {
 		DBGC ( fdt, "FDT could not reallocate from +%#04zx to "
 		       "+%#04zx\n", fdt->len, len );
@@ -1112,7 +1111,7 @@ int fdt_create ( struct fdt_header **hdr, const char *cmdline ) {
 	}
 
 	/* Create modifiable copy */
-	copy = user_to_virt ( umalloc ( fdt.len ), 0 );
+	copy = umalloc ( fdt.len );
 	if ( ! copy ) {
 		rc = -ENOMEM;
 		goto err_alloc;
@@ -1130,7 +1129,7 @@ int fdt_create ( struct fdt_header **hdr, const char *cmdline ) {
 	return 0;
 
  err_bootargs:
-	ufree ( virt_to_user ( fdt.raw ) );
+	ufree ( fdt.raw );
  err_alloc:
  err_image:
 	return rc;
@@ -1144,7 +1143,7 @@ int fdt_create ( struct fdt_header **hdr, const char *cmdline ) {
 void fdt_remove ( struct fdt_header *hdr ) {
 
 	/* Free modifiable copy */
-	ufree ( virt_to_user ( hdr ) );
+	ufree ( hdr );
 }
 
 /* Drag in objects via fdt_describe() */

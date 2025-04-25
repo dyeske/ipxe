@@ -211,7 +211,7 @@ static int com32_load_image ( struct image *image ) {
 
 	filesz = image->len;
 	memsz = filesz;
-	buffer = phys_to_user ( COM32_START_PHYS );
+	buffer = phys_to_virt ( COM32_START_PHYS );
 	if ( ( rc = prep_segment ( buffer, filesz, memsz ) ) != 0 ) {
 		DBGC ( image, "COM32 %p: could not prepare segment: %s\n",
 		       image, strerror ( rc ) );
@@ -219,7 +219,7 @@ static int com32_load_image ( struct image *image ) {
 	}
 
 	/* Copy image to segment */
-	memcpy_user ( buffer, 0, image->data, 0, filesz );
+	memcpy ( buffer, image->data, filesz );
 
 	return 0;
 }
@@ -236,7 +236,7 @@ static int com32_prepare_bounce_buffer ( struct image * image ) {
 	int rc;
 
 	seg = COM32_BOUNCE_SEG;
-	seg_userptr = real_to_user ( seg, 0 );
+	seg_userptr = real_to_virt ( seg, 0 );
 
 	/* Ensure the entire 64k segment is free */
 	memsz = 0xFFFF;
