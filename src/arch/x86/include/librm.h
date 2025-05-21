@@ -64,12 +64,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #else /* ASSEMBLY */
 
-#ifdef UACCESS_LIBRM
-#define UACCESS_PREFIX_librm
-#else
-#define UACCESS_PREFIX_librm __librm_
-#endif
-
 /**
  * Call C function from real-mode code
  *
@@ -78,58 +72,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #define VIRT_CALL( function )						\
 	"pushl $( " _S2 ( VIRTUAL ( function ) ) " )\n\t"		\
 	"call virt_call\n\t"
-
-/* Variables in librm.S */
-extern const unsigned long virt_offset;
-
-/**
- * Convert physical address to user pointer
- *
- * @v phys		Physical address
- * @ret virt		Virtual address
- */
-static inline __always_inline void *
-UACCESS_INLINE ( librm, phys_to_virt ) ( unsigned long phys ) {
-
-	/* In a 64-bit build, any valid physical address is directly
-	 * usable as a virtual address, since the low 4GB is
-	 * identity-mapped.
-	 */
-	if ( sizeof ( physaddr_t ) > sizeof ( uint32_t ) )
-		return ( ( void * ) phys );
-
-	/* In a 32-bit build, subtract virt_offset */
-	return ( ( void * ) ( phys - virt_offset ) );
-}
-
-/**
- * Convert virtual address to physical address
- *
- * @v virt		Virtual address
- * @ret phys		Physical address
- */
-static inline __always_inline physaddr_t
-UACCESS_INLINE ( librm, virt_to_phys ) ( volatile const void *virt ) {
-	physaddr_t addr = ( ( physaddr_t ) virt );
-
-	/* In a 64-bit build, any virtual address in the low 4GB is
-	 * directly usable as a physical address, since the low 4GB is
-	 * identity-mapped.
-	 */
-	if ( ( sizeof ( physaddr_t ) > sizeof ( uint32_t ) ) &&
-	     ( addr <= 0xffffffffUL ) )
-		return addr;
-
-	/* In a 32-bit build or in a 64-bit build with a virtual
-	 * address above 4GB: add virt_offset
-	 */
-	return ( addr + virt_offset );
-}
-
-static inline __always_inline userptr_t
-UACCESS_INLINE ( librm, virt_to_user ) ( volatile const void *addr ) {
-	return trivial_virt_to_user ( addr );
-}
 
 /******************************************************************************
  *
@@ -188,8 +130,8 @@ extern const uint16_t __text16 ( rm_cs );
 extern const uint16_t __text16 ( rm_ds );
 #define rm_ds __use_text16 ( rm_ds )
 
-extern uint16_t copy_user_to_rm_stack ( userptr_t data, size_t size );
-extern void remove_user_from_rm_stack ( userptr_t data, size_t size );
+extern uint16_t copy_to_rm_stack ( const void *data, size_t size );
+extern void remove_from_rm_stack ( void *data, size_t size );
 
 /* CODE_DEFAULT: restore default .code32/.code64 directive */
 #ifdef __x86_64__
@@ -423,7 +365,8 @@ extern char __text16_array ( sipi, [] );
 #define sipi __use_text16 ( sipi )
 
 /** Length of startup IPI real-mode handler */
-extern char sipi_len[];
+extern size_t ABS_SYMBOL ( sipi_len );
+#define sipi_len ABS_VALUE ( sipi_len )
 
 /** Startup IPI real-mode handler copy of real-mode data segment */
 extern uint16_t __text16 ( sipi_ds );

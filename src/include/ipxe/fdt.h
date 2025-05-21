@@ -76,6 +76,14 @@ struct fdt_prop {
 /** Maximum alignment of any block */
 #define FDT_MAX_ALIGN 8
 
+/** A memory reservation */
+struct fdt_reservation {
+	/** Starting address */
+	uint64_t start;
+	/** Length of reservation */
+	uint64_t size;
+} __attribute__ (( packed ));
+
 /** A device tree */
 struct fdt {
 	/** Tree data */
@@ -124,8 +132,41 @@ struct fdt_descriptor {
 	int depth;
 };
 
+/** A device tree region cell size specification */
+struct fdt_reg_cells {
+	/** Number of address cells */
+	uint32_t address_cells;
+	/** Number of size cells */
+	uint32_t size_cells;
+	/** Number of address cells plus number of size cells */
+	unsigned int stride;
+};
+
+/** Default number of address cells, if not specified */
+#define FDT_DEFAULT_ADDRESS_CELLS 2
+
+/** Default number of size cells, if not specified */
+#define FDT_DEFAULT_SIZE_CELLS 1
+
 extern struct image_tag fdt_image __image_tag;
 extern struct fdt sysfdt;
+
+/**
+ * Get memory reservations
+ *
+ * @v fdt		Device tree
+ * @ret rsv		Memory reservations
+ */
+static inline const struct fdt_reservation *
+fdt_reservations ( struct fdt *fdt ) {
+
+	return ( fdt->raw + fdt->reservations );
+}
+
+/** Iterate over memory reservations */
+#define for_each_fdt_reservation( rsv, fdt )			\
+	for ( rsv = fdt_reservations ( (fdt) ) ;		\
+	      ( (rsv)->start || (rsv)->size ) ; rsv++ )
 
 extern int fdt_describe ( struct fdt *fdt, unsigned int offset,
 			  struct fdt_descriptor *desc );
@@ -144,6 +185,16 @@ extern int fdt_u64 ( struct fdt *fdt, unsigned int offset, const char *name,
 		     uint64_t *value );
 extern int fdt_u32 ( struct fdt *fdt, unsigned int offset, const char *name,
 		     uint32_t *value );
+extern void fdt_reg_cells ( struct fdt *fdt, unsigned int offset,
+			    struct fdt_reg_cells *regs );
+extern int fdt_reg_count ( struct fdt *fdt, unsigned int offset,
+			   struct fdt_reg_cells *regs );
+extern int fdt_reg_address ( struct fdt *fdt, unsigned int offset,
+			     struct fdt_reg_cells *regs, unsigned int index,
+			     uint64_t *address );
+extern int fdt_reg_size ( struct fdt *fdt, unsigned int offset,
+			  struct fdt_reg_cells *regs, unsigned int index,
+			  uint64_t *size );
 extern int fdt_mac ( struct fdt *fdt, unsigned int offset,
 		     struct net_device *netdev );
 extern int fdt_parse ( struct fdt *fdt, struct fdt_header *hdr,

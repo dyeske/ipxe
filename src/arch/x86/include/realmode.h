@@ -2,7 +2,9 @@
 #define REALMODE_H
 
 #include <stdint.h>
+#include <string.h>
 #include <registers.h>
+#include <librm.h>
 #include <ipxe/uaccess.h>
 
 /*
