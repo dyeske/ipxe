@@ -25,12 +25,12 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <string.h>
 #include <errno.h>
-#include <initrd.h>
 #include <ipxe/image.h>
 #include <ipxe/uaccess.h>
 #include <ipxe/init.h>
-#include <ipxe/memmap.h>
 #include <ipxe/cpio.h>
+#include <ipxe/uheap.h>
+#include <ipxe/initrd.h>
 
 /** @file
  *
@@ -41,21 +41,16 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 /** Maximum address available for initrd */
 static physaddr_t initrd_top;
 
-/** Minimum address available for initrd */
-static physaddr_t initrd_bottom;
-
 /**
  * Squash initrds as high as possible in memory
  *
  * @v top		Highest possible physical address
- * @ret used		Lowest physical address used by initrds
  */
-static physaddr_t initrd_squash_high ( physaddr_t top ) {
+static void initrd_squash_high ( physaddr_t top ) {
 	physaddr_t current = top;
 	struct image *initrd;
 	struct image *highest;
 	void *data;
-	size_t len;
 
 	/* Squash up any initrds already within or below the region */
 	while ( 1 ) {
@@ -73,10 +68,15 @@ static physaddr_t initrd_squash_high ( physaddr_t top ) {
 		if ( ! highest )
 			break;
 
+		/* Calculate final position */
+		current -= initrd_align ( highest->len );
+		if ( current <= virt_to_phys ( highest->data ) ) {
+			/* Already at (or crossing) top of region */
+			current = virt_to_phys ( highest->data );
+			continue;
+		}
+
 		/* Move this image to its final position */
-		len = ( ( highest->len + INITRD_ALIGN - 1 ) &
-			~( INITRD_ALIGN - 1 ) );
-		current -= len;
 		DBGC ( &images, "INITRD squashing %s [%#08lx,%#08lx)->"
 		       "[%#08lx,%#08lx)\n", highest->name,
 		       virt_to_phys ( highest->data ),
@@ -90,9 +90,7 @@ static physaddr_t initrd_squash_high ( physaddr_t top ) {
 	/* Copy any remaining initrds (e.g. embedded images) to the region */
 	for_each_image ( initrd ) {
 		if ( virt_to_phys ( initrd->data ) >= top ) {
-			len = ( ( initrd->len + INITRD_ALIGN - 1 ) &
-				~( INITRD_ALIGN - 1 ) );
-			current -= len;
+			current -= initrd_align ( initrd->len );
 			DBGC ( &images, "INITRD copying %s [%#08lx,%#08lx)->"
 			       "[%#08lx,%#08lx)\n", initrd->name,
 			       virt_to_phys ( initrd->data ),
@@ -103,8 +101,25 @@ static physaddr_t initrd_squash_high ( physaddr_t top ) {
 			initrd->data = data;
 		}
 	}
+}
 
-	return current;
+/**
+ * Reverse aligned memory region
+ *
+ * @v data		Memory region
+ * @v len		Length of region
+ */
+static void initrd_reverse ( void *data, size_t len ) {
+	unsigned long *low = data;
+	unsigned long *high = ( data + len );
+	unsigned long tmp;
+
+	/* Reverse region */
+	for ( high-- ; low < high ; low++, high-- ) {
+		tmp = *low;
+		*low = *high;
+		*high = tmp;
+	}
 }
 
 /**
@@ -112,14 +127,12 @@ static physaddr_t initrd_squash_high ( physaddr_t top ) {
  *
  * @v low		Lower initrd
  * @v high		Higher initrd
- * @v free		Free space
- * @v free_len		Length of free space
  */
-static void initrd_swap ( struct image *low, struct image *high,
-			  void *free, size_t free_len ) {
-	size_t len = 0;
-	size_t frag_len;
-	size_t new_len;
+static void initrd_swap ( struct image *low, struct image *high ) {
+	size_t low_len;
+	size_t high_len;
+	size_t len;
+	void *data;
 
 	DBGC ( &images, "INITRD swapping %s [%#08lx,%#08lx)<->[%#08lx,%#08lx) "
 	       "%s\n", low->name, virt_to_phys ( low->data ),
@@ -127,53 +140,39 @@ static void initrd_swap ( struct image *low, struct image *high,
 	       virt_to_phys ( high->data ),
 	       ( virt_to_phys ( high->data ) + high->len ), high->name );
 
-	/* Round down length of free space */
-	free_len &= ~( INITRD_ALIGN - 1 );
-	assert ( free_len > 0 );
-
-	/* Swap image data */
-	while ( len < high->len ) {
-
-		/* Calculate maximum fragment length */
-		frag_len = ( high->len - len );
-		if ( frag_len > free_len )
-			frag_len = free_len;
-		new_len = ( ( len + frag_len + INITRD_ALIGN - 1 ) &
-			    ~( INITRD_ALIGN - 1 ) );
-
-		/* Swap fragments */
-		memcpy ( free, ( high->data + len ), frag_len );
-		memmove ( ( low->rwdata + new_len ), ( low->data + len ),
-			  low->len );
-		memcpy ( ( low->rwdata + len ), free, frag_len );
-		len = new_len;
-	}
+	/* Calculate padded lengths */
+	low_len = initrd_align ( low->len );
+	high_len = initrd_align ( high->len );
+	len = ( low_len + high_len );
+	data = low->rwdata;
+	assert ( high->data == ( data + low_len ) );
 
 	/* Adjust data pointers */
-	high->data = low->data;
-	low->data += len;
+	high->data -= low_len;
+	low->data += high_len;
+	assert ( high->data == data );
+
+	/* Swap content via triple reversal */
+	initrd_reverse ( data, len );
+	initrd_reverse ( low->rwdata, low_len );
+	initrd_reverse ( high->rwdata, high_len );
 }
 
 /**
  * Swap position of any two adjacent initrds not currently in the correct order
  *
- * @v free		Free space
- * @v free_len		Length of free space
  * @ret swapped		A pair of initrds was swapped
  */
-static int initrd_swap_any ( void *free, size_t free_len ) {
+static int initrd_swap_any ( void ) {
 	struct image *low;
 	struct image *high;
 	const void *adjacent;
-	size_t padded_len;
 
 	/* Find any pair of initrds that can be swapped */
 	for_each_image ( low ) {
 
 		/* Calculate location of adjacent image (if any) */
-		padded_len = ( ( low->len + INITRD_ALIGN - 1 ) &
-			       ~( INITRD_ALIGN - 1 ) );
-		adjacent = ( low->data + padded_len );
+		adjacent = ( low->data + initrd_align ( low->len ) );
 
 		/* Search for adjacent image */
 		for_each_image ( high ) {
@@ -187,7 +186,7 @@ static int initrd_swap_any ( void *free, size_t free_len ) {
 
 			/* If we have found the adjacent image, swap and exit */
 			if ( high->data == adjacent ) {
-				initrd_swap ( low, high, free, free_len );
+				initrd_swap ( low, high );
 				return 1;
 			}
 		}
@@ -231,28 +230,20 @@ static void initrd_dump ( void ) {
  */
 void initrd_reshuffle ( physaddr_t bottom ) {
 	physaddr_t top;
-	physaddr_t used;
-	void *free;
-	size_t free_len;
 
 	/* Calculate limits of available space for initrds */
-	top = initrd_top;
-	if ( initrd_bottom > bottom )
-		bottom = initrd_bottom;
+	top = ( initrd_top ? initrd_top : uheap_end );
+	assert ( bottom >= uheap_limit );
 
 	/* Debug */
 	DBGC ( &images, "INITRD region [%#08lx,%#08lx)\n", bottom, top );
 	initrd_dump();
 
 	/* Squash initrds as high as possible in memory */
-	used = initrd_squash_high ( top );
-
-	/* Calculate available free space */
-	free = phys_to_virt ( bottom );
-	free_len = ( used - bottom );
+	initrd_squash_high ( top );
 
 	/* Bubble-sort initrds into desired order */
-	while ( initrd_swap_any ( free, free_len ) ) {}
+	while ( initrd_swap_any() ) {}
 
 	/* Debug */
 	initrd_dump();
@@ -270,13 +261,9 @@ int initrd_reshuffle_check ( size_t len, physaddr_t bottom ) {
 	size_t available;
 
 	/* Calculate limits of available space for initrds */
-	top = initrd_top;
-	if ( initrd_bottom > bottom )
-		bottom = initrd_bottom;
+	top = ( initrd_top ? initrd_top : uheap_end );
+	assert ( bottom >= uheap_limit );
 	available = ( top - bottom );
-
-	/* Allow for a sensible minimum amount of free space */
-	len += INITRD_MIN_FREE_LEN;
 
 	/* Check for available space */
 	return ( ( len < available ) ? 0 : -ENOBUFS );
@@ -287,19 +274,19 @@ int initrd_reshuffle_check ( size_t len, physaddr_t bottom ) {
  *
  */
 static void initrd_startup ( void ) {
-	size_t len;
 
-	/* Record largest memory block available.  Do this after any
-	 * allocations made during driver startup (e.g. large host
-	 * memory blocks for Infiniband devices, which may still be in
-	 * use at the time of rearranging if a SAN device is hooked)
-	 * but before any allocations for downloaded images (which we
-	 * can safely reuse when rearranging).
+	/* Record address above which reshuffling cannot take place.
+	 * If any external heap allocations have been made during
+	 * driver startup (e.g. large host memory blocks for
+	 * Infiniband devices, which may still be in use at the time
+	 * of rearranging if a SAN device is hooked), then we must not
+	 * overwrite these allocations during reshuffling.
 	 */
-	len = memmap_largest ( &initrd_bottom );
-	initrd_top = ( initrd_bottom + len );
-	DBGC ( &images, "INITRD largest memory block is [%#08lx,%#08lx)\n",
-	       initrd_bottom, initrd_top );
+	initrd_top = uheap_start;
+	if ( initrd_top ) {
+		DBGC ( &images, "INITRD limiting reshuffling to below "
+		       "%#08lx\n", initrd_top );
+	}
 }
 
 /** initrd startup function */
