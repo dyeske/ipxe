@@ -120,7 +120,7 @@ static void multiboot_build_memmap ( struct image *image,
 		/* Ignore any non-memory regions */
 		if ( ! ( region.flags & MEMMAP_FL_MEMORY ) )
 			continue;
-		memmap_dump ( &region );
+		DBGC_MEMMAP ( image, &region );
 
 		/* Check Multiboot memory map limit */
 		if ( ! remaining ) {
@@ -132,7 +132,7 @@ static void multiboot_build_memmap ( struct image *image,
 		/* Populate Multiboot memory map entry */
 		mbmemmap->size = ( sizeof ( *mbmemmap ) -
 				   sizeof ( mbmemmap->size ) );
-		mbmemmap->base_addr = region.addr;
+		mbmemmap->base_addr = region.min;
 		mbmemmap->length = memmap_size ( &region );
 		mbmemmap->type = MBMEM_RAM;
 

@@ -80,12 +80,12 @@ __asmcall void relocate ( struct i386_all_regs *ix86 ) {
 		 * away with using just 32-bit arithmetic after this
 		 * stage.
 		 */
-		memmap_dump ( &region );
-		if ( region.addr > max ) {
+		DBGC_MEMMAP ( &region, &region );
+		if ( region.min > max ) {
 			DBGC ( &region, "...starts after max=%#08lx\n", max );
 			break;
 		}
-		r_start = region.addr;
+		r_start = region.min;
 		if ( ! memmap_is_usable ( &region ) ) {
 			DBGC ( &region, "...not usable\n" );
 			continue;

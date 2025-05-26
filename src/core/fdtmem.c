@@ -119,6 +119,10 @@ static int fdtmem_update_node ( struct memmap_region *region, struct fdt *fdt,
 		/* Count regions */
 		count = fdt_reg_count ( fdt, desc.offset, &regs );
 		if ( count < 0 ) {
+			if ( flags & MEMMAP_FL_RESERVED ) {
+				/* Assume this is a non-fixed reservation */
+				continue;
+			}
 			rc = count;
 			DBGC ( region, "FDTMEM has malformed region %s: %s\n",
 			       desc.name, strerror ( rc ) );
@@ -196,22 +200,23 @@ static int fdtmem_update_tree ( struct memmap_region *region,
 /**
  * Describe memory region
  *
- * @v addr		Address within region
- * @v fdt		Device tree
+ * @v min		Minimum address
  * @v max		Maximum accessible physical address
+ * @v fdt		Device tree
  * @v region		Region descriptor to fill in
  */
-static void fdtmem_describe ( uint64_t addr, struct fdt *fdt, physaddr_t max,
+static void fdtmem_describe ( uint64_t min, uint64_t max, struct fdt *fdt,
 			      struct memmap_region *region ) {
-	uint64_t inaccessible = ( ( ( uint64_t ) max ) + 1 );
+	uint64_t inaccessible;
 
 	/* Initialise region */
-	memmap_init ( addr, region );
+	memmap_init ( min, region );
 
 	/* Update region based on device tree */
 	fdtmem_update_tree ( region, fdt );
 
 	/* Treat inaccessible physical memory as such */
+	inaccessible = ( max + 1 );
 	memmap_update ( region, inaccessible, -inaccessible,
 			MEMMAP_FL_INACCESSIBLE, NULL );
 }
@@ -272,7 +277,7 @@ physaddr_t fdtmem_relocate ( struct fdt_header *hdr, physaddr_t max ) {
 
 	/* Parse FDT */
 	if ( ( rc = fdt_parse ( &fdt, hdr, -1UL ) ) != 0 ) {
-		DBGC ( &region, "FDTMEM could not parse FDT: %s\n",
+		DBGC ( hdr, "FDTMEM could not parse FDT: %s\n",
 		       strerror ( rc ) );
 		/* Refuse relocation if we have no FDT */
 		return old;
@@ -281,7 +286,7 @@ physaddr_t fdtmem_relocate ( struct fdt_header *hdr, physaddr_t max ) {
 	/* Determine required length */
 	len = fdtmem_len ( &fdt );
 	assert ( len > 0 );
-	DBGC ( &region, "FDTMEM requires %#zx + %#zx => %#zx bytes for "
+	DBGC ( hdr, "FDTMEM requires %#zx + %#zx => %#zx bytes for "
 	       "relocation\n", memsz, fdt.len, len );
 
 	/* Construct memory map and choose a relocation address */
@@ -289,15 +294,15 @@ physaddr_t fdtmem_relocate ( struct fdt_header *hdr, physaddr_t max ) {
 	for ( addr = 0, next = 1 ; next ; addr = next ) {
 
 		/* Describe region and in-use memory */
-		fdtmem_describe ( addr, &fdt, max, &region );
+		fdtmem_describe ( addr, max, &fdt, &region );
 		memmap_update ( &region, old, memsz, MEMMAP_FL_USED, "iPXE" );
 		memmap_update ( &region, virt_to_phys ( hdr ), fdt.len,
 				MEMMAP_FL_RESERVED, "FDT" );
-		next = ( region.last + 1 );
+		next = ( region.max + 1 );
 
 		/* Dump region descriptor (for debugging) */
-		memmap_dump ( &region );
-		assert ( region.last >= region.addr );
+		DBGC_MEMMAP ( hdr, &region );
+		assert ( region.max >= region.min );
 
 		/* Use highest possible region */
 		if ( memmap_is_usable ( &region ) &&
@@ -312,7 +317,7 @@ physaddr_t fdtmem_relocate ( struct fdt_header *hdr, physaddr_t max ) {
 		}
 	}
 
-	DBGC ( &region, "FDTMEM relocating %#08lx => [%#08lx,%#08lx]\n",
+	DBGC ( hdr, "FDTMEM relocating %#08lx => [%#08lx,%#08lx]\n",
 	       old, new, ( ( physaddr_t ) ( new + len - 1 ) ) );
 	return new;
 }
@@ -364,15 +369,15 @@ int fdtmem_register ( struct fdt_header *hdr, physaddr_t max ) {
 /**
  * Describe memory region from system memory map
  *
- * @v addr		Address within region
+ * @v min		Minimum address
  * @v hide		Hide in-use regions from the memory map
  * @v region		Region descriptor to fill in
  */
-static void fdtmem_describe_region ( uint64_t addr, int hide,
+static void fdtmem_describe_region ( uint64_t min, int hide,
 				     struct memmap_region *region ) {
 
 	/* Describe memory region based on device tree */
-	fdtmem_describe ( addr, &sysfdt, fdtmem_max, region );
+	fdtmem_describe ( min, fdtmem_max, &sysfdt, region );
 
 	/* Update memory region based on in-use regions, if applicable */
 	if ( hide )

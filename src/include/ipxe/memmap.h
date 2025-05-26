@@ -46,15 +46,10 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 /** A memory region descriptor */
 struct memmap_region {
-	/** The address being described */
-	uint64_t addr;
-	/** Last address with the same description
-	 *
-	 * Note that this is the last address with the same
-	 * description as the address being described, not the first
-	 * address with a different description.
-	 */
-	uint64_t last;
+	/** Minimum address in region */
+	uint64_t min;
+	/** Maximum address in region */
+	uint64_t max;
 	/** Region flags */
 	unsigned int flags;
 	/** Region name (for debug messages) */
@@ -69,14 +64,14 @@ struct memmap_region {
 /**
  * Initialise memory region descriptor
  *
- * @v addr		Address within region
+ * @v min		Minimum address
  * @v region		Region descriptor to fill in
  */
 static inline __attribute__ (( always_inline )) void
-memmap_init ( uint64_t addr, struct memmap_region *region ) {
+memmap_init ( uint64_t min, struct memmap_region *region ) {
 
-	region->addr = addr;
-	region->last = ~( ( uint64_t ) 0 );
+	region->min = min;
+	region->max = ~( ( uint64_t ) 0 );
 	region->flags = 0;
 	region->name = NULL;
 }
@@ -103,7 +98,7 @@ static inline __attribute__ (( always_inline )) uint64_t
 memmap_size ( const struct memmap_region *region ) {
 
 	/* Calculate size, assuming overflow is known to be impossible */
-	return ( ( region->last + 1 ) - region->addr );
+	return ( region->max - region->min + 1 );
 }
 
 /** An in-use memory region */
@@ -132,11 +127,11 @@ struct used_region {
 /**
  * Describe memory region from system memory map
  *
- * @v addr		Address within region
+ * @v min		Minimum address
  * @v hide		Hide in-use regions from the memory map
  * @v region		Region descriptor to fill in
  */
-void memmap_describe ( uint64_t addr, int hide, struct memmap_region *region );
+void memmap_describe ( uint64_t min, int hide, struct memmap_region *region );
 
 /**
  * Synchronise in-use regions with the externally visible system memory map
@@ -173,11 +168,11 @@ memmap_use ( struct used_region *used, physaddr_t start, size_t size ) {
  * @v hide		Hide in-use regions from the memory map
  */
 #define for_each_memmap_from( region, start, hide )			\
-	for ( (region)->addr = (start), (region)->last = 0 ;		\
-	      ( ( ( (region)->last + 1 ) != 0 ) &&			\
-		( memmap_describe ( (region)->addr, (hide),		\
+	for ( (region)->min = (start), (region)->max = 0 ;		\
+	      ( ( ( (region)->max + 1 ) != 0 ) &&			\
+		( memmap_describe ( (region)->min, (hide),		\
 				    (region) ), 1 ) ) ;			\
-	      (region)->addr = ( (region)->last + 1 ) )
+	      (region)->min = ( (region)->max + 1 ) )
 
 /**
  * Iterate over memory regions
@@ -188,26 +183,29 @@ memmap_use ( struct used_region *used, physaddr_t start, size_t size ) {
 #define for_each_memmap( region, hide )					\
 	for_each_memmap_from ( (region), 0, (hide) )
 
+#define DBG_MEMMAP_IF( level, region ) do {				\
+	const char *name = (region)->name;				\
+	unsigned int flags = (region)->flags;				\
+									\
+	DBG_IF ( level, "MEMMAP (%s%s%s%s) [%#08llx,%#08llx]%s%s\n",	\
+		 ( ( flags & MEMMAP_FL_MEMORY ) ? "M" : "-" ),		\
+		 ( ( flags & MEMMAP_FL_RESERVED ) ? "R" : "-" ),	\
+		 ( ( flags & MEMMAP_FL_USED ) ? "U" : "-" ),		\
+		 ( ( flags & MEMMAP_FL_INACCESSIBLE ) ? "X" : "-" ),	\
+		 ( ( unsigned long long ) (region)->min ),		\
+		 ( ( unsigned long long ) (region)->max ),		\
+		 ( name ? " " : "" ), ( name ? name : "" ) );		\
+	} while ( 0 )
 
-/**
- * Dump memory region descriptor (for debugging)
- *
- * @v region		Region descriptor
- */
-static inline void memmap_dump ( const struct memmap_region *region ) {
-	const char *name = region->name;
-	unsigned int flags = region->flags;
+#define DBGC_MEMMAP_IF( level, id, ... ) do {				\
+		DBG_AC_IF ( level, id );				\
+		DBG_MEMMAP_IF ( level, __VA_ARGS__ );			\
+		DBG_DC_IF ( level );					\
+	} while ( 0 )
 
-	/* Dump region information */
-	DBGC ( region, "MEMMAP (%s%s%s%s) [%#08llx,%#08llx]%s%s\n",
-	       ( ( flags & MEMMAP_FL_MEMORY ) ? "M" : "-" ),
-	       ( ( flags & MEMMAP_FL_RESERVED ) ? "R" : "-" ),
-	       ( ( flags & MEMMAP_FL_USED ) ? "U" : "-" ),
-	       ( ( flags & MEMMAP_FL_INACCESSIBLE ) ? "X" : "-" ),
-	       ( ( unsigned long long ) region->addr ),
-	       ( ( unsigned long long ) region->last ),
-	       ( name ? " " : "" ), ( name ? name : "" ) );
-}
+#define DBGC_MEMMAP( ... )	DBGC_MEMMAP_IF ( LOG, ##__VA_ARGS__ )
+#define DBGC2_MEMMAP( ... )	DBGC_MEMMAP_IF ( EXTRA, ##__VA_ARGS__ )
+#define DBGCP_MEMMAP( ... )	DBGC_MEMMAP_IF ( PROFILE, ##__VA_ARGS__ )
 
 /**
  * Dump system memory map (for debugging)
@@ -222,10 +220,10 @@ static inline void memmap_dump_all ( int hide ) {
 		return;
 
 	/* Describe all memory regions */
-	DBGC ( &region, "MEMMAP with in-use regions %s:\n",
+	DBGC ( &memmap_describe, "MEMMAP with in-use regions %s:\n",
 	       ( hide ? "hidden" : "ignored" ) );
 	for_each_memmap ( &region, hide )
-		memmap_dump ( &region );
+		DBGC_MEMMAP ( &memmap_describe, &region );
 }
 
 extern void memmap_update ( struct memmap_region *region, uint64_t start,

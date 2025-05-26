@@ -80,6 +80,9 @@ prefix_virt:
 #define SBI_DBCN ( ( 'D' << 24 ) | ( 'B' << 16 ) | ( 'C' << 8 ) | 'N' )
 #define SBI_DBCN_WRITE_BYTE 0x02
 
+/* SBI legacy console putchar */
+#define SBI_LEGACY_PUTCHAR 0x01
+
 	.section ".prefix.print_message", "ax", @progbits
 	.globl	print_message
 print_message:
@@ -107,6 +110,10 @@ print_message_alt:
 	beqz	a0, 2f
 	li	a7, SBI_DBCN
 	li	a6, SBI_DBCN_WRITE_BYTE
+	ecall
+	beqz	a0, 1b
+	lbu	a0, -1(t1)
+	li	a7, SBI_LEGACY_PUTCHAR
 	ecall
 	j	1b
 2:
@@ -154,6 +161,17 @@ progress_\@:
  * Returns: none
  *
  */
+
+	/*
+	 * Convert a single nibble to an ASCII character
+	 */
+	.macro	nibble_to_ascii reg
+	addi	\reg, \reg, -10
+	bltz	\reg, dec_\@
+	addi	\reg, \reg, ( 'a' - ( '0' + 10 ) )
+dec_\@:	addi	\reg, \reg, ( '0' + 10 )
+	.endm
+
 	.section ".prefix.print_hex_value", "ax", @progbits
 	.globl	print_hex_value
 print_hex_value:
@@ -183,14 +201,16 @@ print_hex_value_alt:
 
 1:	/* Print each digit in turn */
 	srli	a0, t1, ( __riscv_xlen - 4 )
-	addi	a0, a0, -10
-	bltz	a0, 2f
-	addi	a0, a0, ( 'a' - ( '0' + 10 ) )
-2:	addi	a0, a0, ( '0' + 10 )
+	nibble_to_ascii a0
 	li	a7, SBI_DBCN
 	li	a6, SBI_DBCN_WRITE_BYTE
 	ecall
-	slli	t1, t1, 4
+	beqz	a0, 2f
+	srli	a0, t1, ( __riscv_xlen - 4 )
+	nibble_to_ascii a0
+	li	a7, SBI_LEGACY_PUTCHAR
+	ecall
+2:	slli	t1, t1, 4
 	addi	t2, t2, -4
 	bgtz	t2, 1b
 
@@ -331,14 +351,14 @@ apply_relocs_loop:
 
 apply_relocs_done:
 	/* Return to caller */
-	progress " ok\n"
+	progress " ok\r\n"
 	ret
 
 apply_relocs_failed:
 	/* Failure to apply relocations (if relocations were needed)
 	 * is a fatal error.
 	 */
-	progress " failed\n"
+	progress " failed\r\n"
 	j	reset_system
 	.size	apply_relocs, . - apply_relocs
 
@@ -1008,13 +1028,13 @@ install:
 	 * s6 - relocation offset
 	 * tp - virtual address offset
 	 */
-	progress "\nSBI->iPXE hart:"
+	progress "\r\nSBI->iPXE hart:"
 	print_hex_reg a0
 	progress " temp:"
 	print_hex_reg a2
 	progress " fdt:"
 	print_hex_reg a1
-	progress "\nSBI->iPXE phys:"
+	progress "\r\nSBI->iPXE phys:"
 	print_hex_addr _prefix
 	progress " virt:"
 	print_hex_data prefix_virt
@@ -1094,7 +1114,7 @@ install:
 	/* Return to a virtual address in the relocated copy */
 	add	ra, s2, s6
 	sub	ra, ra, tp
-	progress "\n"
+	progress "\r\n"
 	ret
 	.size	install, . - install
 
@@ -1121,11 +1141,14 @@ install:
 #define SBI_SRST_SYSTEM_RESET 0x00
 #define SBI_RESET_COLD 0x00000001
 
+/* SBI legacy shutdown */
+#define SBI_LEGACY_SHUTDOWN 0x08
+
 	.section ".prefix.reset_system", "ax", @progbits
 	.globl	reset_system
 reset_system:
 	/* Register usage: irrelevant (does not return) */
-	progress "\niPXE->SBI reset\n"
+	progress "\r\niPXE->SBI reset\r\n"
 
 	/* Attempt reset */
 	li	a7, SBI_SRST
@@ -1133,9 +1156,14 @@ reset_system:
 	li	a0, SBI_RESET_COLD
 	mv	a1, zero
 	ecall
+	progress "(reset failed)\r\n"
+
+	/* Attempt legacy shutdown */
+	li	a7, SBI_LEGACY_SHUTDOWN
+	ecall
+	progress "(legacy shutdown failed)\r\n"
 
 	/* If reset failed, lock the system */
-	progress "(reset failed)\n"
 1:	wfi
 	j	1b
 	.size	reset_system, . - reset_system
