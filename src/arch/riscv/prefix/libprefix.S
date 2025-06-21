@@ -29,6 +29,8 @@
  *
  */
 
+#include <config/serial.h>
+
 	.section ".note.GNU-stack", "", @progbits
 	.text
 
@@ -54,6 +56,221 @@ prefix_virt:
 
 /*****************************************************************************
  *
+ * Print character via debug console extension
+ *
+ *****************************************************************************
+ *
+ * Print a single character via the SBI DBCN extension.
+ *
+ * Parameters:
+ *
+ *   a0 - Character to print
+ *
+ * Returns:
+ *
+ *   a0 - Zero if character printed successfully
+ *   a1 - Overwritten
+ *   a6 - Overwritten
+ *   a7 - Overwritten
+ *
+ */
+
+/* SBI debug console extension */
+#define SBI_DBCN ( ( 'D' << 24 ) | ( 'B' << 16 ) | ( 'C' << 8 ) | 'N' )
+#define SBI_DBCN_WRITE_BYTE 0x02
+
+	.macro	print_char_dbcn
+	li	a7, SBI_DBCN
+	li	a6, SBI_DBCN_WRITE_BYTE
+	ecall
+	.endm
+
+/*****************************************************************************
+ *
+ * Print character via legacy extension
+ *
+ *****************************************************************************
+ *
+ * Print a single character via the SBI putchar legacy extension.
+ *
+ * Parameters:
+ *
+ *   a0 - Character to print
+ *
+ * Returns:
+ *
+ *   a0 - Overwritten
+ *   a7 - Overwritten
+ *
+ */
+
+/* SBI legacy console putchar */
+#define SBI_LEGACY_PUTCHAR 0x01
+
+	.macro	print_char_legacy
+	li	a7, SBI_LEGACY_PUTCHAR
+	ecall
+	.endm
+
+/*****************************************************************************
+ *
+ * Print character via early UART
+ *
+ *****************************************************************************
+ *
+ * Print a single character via a UART.
+ *
+ * For devices without a functional SBI console, a UART at a hardcoded
+ * address can be used as a last resort mechanism for obtaining debug
+ * output from the prefix.
+ *
+ * Parameters:
+ *
+ *   a0 - Character to print
+ *
+ * Returns:
+ *
+ *   a0 - Preserved
+ *   a1 - May be overwritten
+ *   a6 - May be overwritten
+ *   a7 - May be overwritten
+ *
+ */
+
+/* Default to no UART, if not specified */
+#ifndef EARLY_UART_MODEL
+#define EARLY_UART_MODEL none
+#endif
+
+/* Default to a register shift of zero, if not specified */
+#ifndef EARLY_UART_REG_SHIFT
+#define EARLY_UART_REG_SHIFT 0
+#endif
+
+#define print_char_uart _C2 ( print_char_uart_, EARLY_UART_MODEL )
+
+#define early_uart_reg_base _C2 ( early_uart_reg_base_, __riscv_xlen )
+
+	/* Print character via nonexistent UART */
+	.macro	print_char_uart_none
+	.endm
+
+	/*
+	 * Get UART base address (64-bit addressing)
+	 */
+	.macro	early_uart_reg_base_64 reg
+	csrr	\reg, satp
+	beqz	\reg, early_uart_reg_base_64_nonpaged_\@
+	LOADN	\reg, early_uart_reg_base_64_virt
+	j	early_uart_reg_base_64_done_\@
+early_uart_reg_base_64_nonpaged_\@:
+	li	\reg, EARLY_UART_REG_BASE
+early_uart_reg_base_64_done_\@:
+	.endm
+
+	/*
+	 * Get UART base address (32-bit addressing)
+	 */
+	.macro	early_uart_reg_base_32 reg
+	li	\reg, EARLY_UART_REG_BASE
+	sub	\reg, \reg, tp
+	.endm
+
+/*****************************************************************************
+ *
+ * Print character via 8250-compatible early UART
+ *
+ *****************************************************************************
+ *
+ * Print a single character via an 8250- or 16550-compatible UART.
+ *
+ * Parameters:
+ *
+ *   a0 - Character to print
+ *
+ * Returns:
+ *
+ *   a0 - Preserved
+ *   a1 - Overwritten
+ *   a7 - Overwritten
+ *
+ */
+
+/* 8250-compatible UART transmit registers */
+#define EARLY_UART_8250_TX		( 0 << EARLY_UART_REG_SHIFT )
+#define EARLY_UART_8250_LSR		( 5 << EARLY_UART_REG_SHIFT )
+#define EARLY_UART_8250_LSR_THRE	0x20
+
+	.macro	print_char_uart_8250
+	early_uart_reg_base a7
+	sb	a0, EARLY_UART_8250_TX(a7)
+	fence
+early_uart_8250_wait_\@:
+	lbu	a1, EARLY_UART_8250_LSR(a7)
+	andi	a1, a1, EARLY_UART_8250_LSR_THRE
+	beqz	a1, early_uart_8250_wait_\@
+	.endm
+
+/*****************************************************************************
+ *
+ * Print character via SiFive-compatible early UART
+ *
+ *****************************************************************************
+ *
+ * Print a single character via a SiFive-compatible UART.
+ *
+ * Parameters:
+ *
+ *   a0 - Character to print
+ *
+ * Returns:
+ *
+ *   a0 - Preserved
+ *   a1 - Overwritten
+ *   a7 - Overwritten
+ *
+ */
+
+/* SiFive-compatible UART transmit registers */
+#define EARLY_UART_SIFIVE_TXFIFO	( 0 << EARLY_UART_REG_SHIFT )
+
+	.macro	print_char_uart_sifive
+	early_uart_reg_base a7
+	sw	a0, EARLY_UART_SIFIVE_TXFIFO(a7)
+	fence
+early_uart_sifive_wait_\@:
+	lw	a1, EARLY_UART_SIFIVE_TXFIFO(a7)
+	bltz	a1, early_uart_sifive_wait_\@
+	.endm
+
+/*****************************************************************************
+ *
+ * Print single character to early UART (from C code)
+ *
+ *****************************************************************************
+ *
+ * This function is called by the SBI console driver to output a
+ * character to the early UART (if enabled).
+ *
+ * The standard C ABI applies to this function.
+ *
+ * Parameters:
+ *
+ *   a0 - Character to print
+ *
+ * Returns: none
+ *
+ */
+
+	.section ".prefix.early_uart_putchar", "ax", @progbits
+	.globl	early_uart_putchar
+early_uart_putchar:
+	print_char_uart
+	ret
+	.size	early_uart_putchar, . - early_uart_putchar
+
+/*****************************************************************************
+ *
  * Print message to debug console
  *
  *****************************************************************************
@@ -75,13 +292,6 @@ prefix_virt:
  * Returns: none
  *
  */
-
-/* SBI debug console extension */
-#define SBI_DBCN ( ( 'D' << 24 ) | ( 'B' << 16 ) | ( 'C' << 8 ) | 'N' )
-#define SBI_DBCN_WRITE_BYTE 0x02
-
-/* SBI legacy console putchar */
-#define SBI_LEGACY_PUTCHAR 0x01
 
 	.section ".prefix.print_message", "ax", @progbits
 	.globl	print_message
@@ -108,13 +318,11 @@ print_message_alt:
 	lbu	a0, (t1)
 	addi	t1, t1, 1
 	beqz	a0, 2f
-	li	a7, SBI_DBCN
-	li	a6, SBI_DBCN_WRITE_BYTE
-	ecall
+	print_char_uart
+	print_char_dbcn
 	beqz	a0, 1b
 	lbu	a0, -1(t1)
-	li	a7, SBI_LEGACY_PUTCHAR
-	ecall
+	print_char_legacy
 	j	1b
 2:
 	/* Restore registers and return (via alternate link register) */
@@ -202,14 +410,12 @@ print_hex_value_alt:
 1:	/* Print each digit in turn */
 	srli	a0, t1, ( __riscv_xlen - 4 )
 	nibble_to_ascii a0
-	li	a7, SBI_DBCN
-	li	a6, SBI_DBCN_WRITE_BYTE
-	ecall
+	print_char_uart
+	print_char_dbcn
 	beqz	a0, 2f
 	srli	a0, t1, ( __riscv_xlen - 4 )
 	nibble_to_ascii a0
-	li	a7, SBI_LEGACY_PUTCHAR
-	ecall
+	print_char_legacy
 2:	slli	t1, t1, 4
 	addi	t2, t2, -4
 	bgtz	t2, 1b
@@ -613,6 +819,33 @@ page_table:
  *      use only a single physical 4kB page table.
  */
 
+/** SBI base extension */
+#define SBI_BASE 0x10
+#define SBI_BASE_MVENDORID 0x04
+
+/** Non-standard T-Head page table entry additional flags
+ *
+ * T-Head processors such as the C910 use the high bits of the PTE in
+ * a very non-standard way that is incompatible with the RISC-V
+ * specification.
+ *
+ * As per the "Memory Attribute Extension (XTheadMae)", bits 62 and 61
+ * represent cacheability and "bufferability" (i.e. write-back
+ * cacheability) respectively.  If we do not enable these bits, then
+ * the processor gets incredibly confused at the point that paging is
+ * enabled.  The symptom is that cache lines will occasionally fail to
+ * fill, and so reads from any address may return unrelated data from
+ * a previously read cache line for a different address.
+ */
+#define THEAD_PTE_MAEE ( 0x60 << ( __riscv_xlen - 8 ) )
+
+/** T-Head vendor ID */
+#define THEAD_MVENDORID 0x5b7
+
+/** T-Head "sxstatus" CSR */
+#define THEAD_CSR_SXSTATUS 0x5c0
+#define THEAD_CSR_SXSTATUS_MAEE	0x00200000	/**< XTheadMae enabled */
+
 	.section ".prefix.enable_paging_64", "ax", @progbits
 enable_paging_64:
 	/* Register usage:
@@ -626,13 +859,38 @@ enable_paging_64:
 	 * a5 - size of accessible physical address space
 	 */
 	progress " paging:"
-	li	a1, SATP_MODE_SV57
 
 	/* Calculate virtual address offset */
 	LOADN	t0, prefix_link
 	la	t1, _prefix
 	sub	tp, t1, t0
 
+	/* Construct base page table entry for address zero */
+	li	t0, PTE_LEAF
+	STOREN	t0, (a0)
+
+	/* Check for broken T-Head paging extensions */
+	mv	a3, a0
+	li	a7, SBI_BASE
+	li	a6, SBI_BASE_MVENDORID
+	ecall
+	bnez	a0, 1f
+	li	t0, THEAD_MVENDORID
+	bne	a1, t0, 1f
+	progress "thead-"
+	csrr	t0, THEAD_CSR_SXSTATUS
+	li	t1, THEAD_CSR_SXSTATUS_MAEE
+	and	t0, t0, t1
+	beqz	t0, 1f
+	progress "mae-"
+	LOADN	t0, (a3)
+	li	t1, THEAD_PTE_MAEE
+	or	t0, t0, t1
+	STOREN	t0, (a3)
+1:	mv	a0, a3
+
+	/* Find highest supported paging level */
+	li	a1, SATP_MODE_SV57
 enable_paging_64_loop:
 
 	/* Calculate PTE stride for identity map at this paging level
@@ -660,7 +918,7 @@ enable_paging_64_loop:
 	/* Construct PTE[0-255] for identity map */
 	mv	a3, a0
 	li	t0, ( PTE_COUNT / 2 )
-	li	t1, PTE_LEAF
+	LOADN	t1, (a0)
 1:	STOREN	t1, (a3)
 	addi	a3, a3, PTE_SIZE
 	add	t1, t1, a4
@@ -694,28 +952,38 @@ enable_paging_64_loop:
 	li	a4, 1
 	slli	a4, a4, PTE_PPN1_LSB
 
+	/* Construct PTE[x-1] for early UART, if applicable */
+#ifdef EARLY_UART_REG_BASE
+	li	t0, ( EARLY_UART_REG_BASE & ~( ( 1 << VPN1_LSB ) - 1 ) )
+	srli	t0, t0, PTE_PPN_SHIFT
+	ori	t0, t0, ( PTE_LEAF & ~PTE_X )
+	STOREN	t0, -PTE_SIZE(a3)
+#endif
+
 	/* Construct PTE[x-y] for iPXE virtual address map */
 	la	t0, _prefix
 	srli	t0, t0, PTE_PPN_SHIFT
-	ori	t0, t0, PTE_LEAF
-	la	t1, _ebss
-	srli	t1, t1, PTE_PPN_SHIFT
+	LOADN	t1, (a0)
+	or	t0, t0, t1
+	la	t2, _ebss
+	srli	t2, t2, PTE_PPN_SHIFT
 1:	STOREN	t0, (a3)
 	addi	a3, a3, PTE_SIZE
 	add	t0, t0, a4
-	ble	t0, t1, 1b
+	ble	t0, t2, 1b
 
 	/* Attempt to enable paging, and read back active paging level */
 	slli	t0, a1, SATP_MODE_SHIFT
 	srli	t1, a0, PAGE_SHIFT
 	or	t0, t0, t1
-	csrrw	zero, satp, t0
+	csrw	satp, t0
 	sfence.vma
-	csrrw	a2, satp, t0
+	csrr	a2, satp
 	srli	a2, a2, SATP_MODE_SHIFT
 
 	/* Loop until we successfully enable paging, or run out of levels */
 	beq	a2, a1, 1f
+	csrw	satp, zero
 	addi	a1, a1, -1
 	li	t0, SATP_MODE_SV39
 	bge	a1, t0, enable_paging_64_loop
@@ -737,6 +1005,20 @@ enable_paging_64_loop:
 	mv	\rd, \rs
 	.endif
 	.endm
+
+	/* Early UART base address when 64-bit paging is enabled
+	 *
+	 * When an early UART is in use, we choose to use the 2MB
+	 * "megapage" immediately below iPXE itself to map the UART.
+	 */
+#ifdef EARLY_UART_REG_BASE
+	.section ".rodata.early_uart_reg_base_64_virt", "a", @progbits
+	.balign	8
+early_uart_reg_base_64_virt:
+	.dword	( _base - ( 1 << VPN1_LSB ) + \
+	          ( EARLY_UART_REG_BASE & ( ( 1 << VPN1_LSB ) - 1 ) ) )
+	.size	early_uart_reg_base_64_virt, . - early_uart_reg_base_64_virt
+#endif
 
 /*****************************************************************************
  *
@@ -873,9 +1155,9 @@ enable_paging_32:
 	.balign	enable_paging_32_xalign
 	/* Start of transition code */
 enable_paging_32_xstart:
-	csrrw	zero, satp, t1
+	csrw	satp, t1
 	sfence.vma
-	csrrw	a1, satp, t1
+	csrr	a1, satp
 	beqz	a1, 2f
 	jr	t0
 1:	/* Restore temporarily modified PTE */
@@ -885,8 +1167,9 @@ enable_paging_32_xstart:
 	.equ	enable_paging_32_xlen, . - enable_paging_32_xstart
 2:	srli	a1, a1, SATP_MODE_SHIFT
 
-	/* Clear virtual address offset if paging is not enabled */
+	/* Zero SATP and virtual address offset if paging is not enabled */
 	bnez	a1, 1f
+	csrw	satp, zero
 	mv	tp, zero
 1:
 	/* Adjust return address to a virtual address */
@@ -1028,6 +1311,7 @@ install:
 	 * s6 - relocation offset
 	 * tp - virtual address offset
 	 */
+	mv	tp, zero
 	progress "\r\nSBI->iPXE hart:"
 	print_hex_reg a0
 	progress " temp:"
@@ -1042,9 +1326,6 @@ install:
 	mv	s1, a1
 	mv	s2, ra
 	la	s3, _edata
-
-	/* Initialise virtual address offset */
-	mv	tp, zero
 
 	/* Attempt to enable paging, if we have temporary page table space */
 	mv	a0, a2

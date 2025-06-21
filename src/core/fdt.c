@@ -24,6 +24,7 @@
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <string.h>
+#include <ctype.h>
 #include <errno.h>
 #include <assert.h>
 #include <byteswap.h>
@@ -49,6 +50,33 @@ struct image_tag fdt_image __image_tag = {
 
 /** Amount of free space to add whenever we have to reallocate a tree */
 #define FDT_INSERT_PAD 1024
+
+/**
+ * Check if character is permitted in a name
+ *
+ * @v ch		Character
+ * @ret is_permitted	Character is permitted in a name
+ */
+static int fdt_permitted ( char ch ) {
+	static const char permitted[] = ",._+?#-";
+
+	return ( isalnum ( ch ) || strchr ( permitted, ch ) );
+}
+
+/**
+ * Compare node name
+ *
+ * @v desc		Token descriptor
+ * @v name		Name (terminated by NUL or any non-permitted character)
+ * @ret is_match	Name matches token descriptor
+ */
+static int fdt_match ( const struct fdt_descriptor *desc, const char *name ) {
+	size_t len = strlen ( desc->name );
+
+	/* Check name and terminator */
+	return ( ( memcmp ( desc->name, name, len ) == 0 ) &&
+		 ( ! ( name[len] && fdt_permitted ( name[len] ) ) ) );
+}
 
 /**
  * Describe device tree token
@@ -181,7 +209,7 @@ static int fdt_next ( struct fdt *fdt, struct fdt_descriptor *desc ) {
  * @ret rc		Return status code
  */
 static int fdt_enter ( struct fdt *fdt, unsigned int offset,
-		struct fdt_descriptor *desc ) {
+		       struct fdt_descriptor *desc ) {
 	int rc;
 
 	/* Find begin node token */
@@ -213,6 +241,100 @@ static int fdt_enter ( struct fdt *fdt, unsigned int offset,
 }
 
 /**
+ * Find node relative depth
+ *
+ * @v fdt		Device tree
+ * @v offset		Starting node offset
+ * @v target		Target node offset
+ * @ret depth		Depth, or negative error
+ */
+static int fdt_depth ( struct fdt *fdt, unsigned int offset,
+		       unsigned int target ) {
+	struct fdt_descriptor desc;
+	int depth;
+	int rc;
+
+	/* Enter node */
+	if ( ( rc = fdt_enter ( fdt, offset, &desc ) ) != 0 )
+		return rc;
+
+	/* Find target node */
+	for ( depth = 0 ; depth >= 0 ; depth += desc.depth ) {
+
+		/* Describe token */
+		if ( ( rc = fdt_next ( fdt, &desc ) ) != 0 ) {
+			DBGC ( fdt, "FDT +%#04x has malformed node: %s\n",
+			       offset, strerror ( rc ) );
+			return rc;
+		}
+
+		/* Check for target node */
+		if ( desc.offset == target ) {
+			DBGC2 ( fdt, "FDT +%#04x has descendant node +%#04x "
+				"at depth +%d\n", offset, target, depth );
+			return depth;
+		}
+	}
+
+	DBGC ( fdt, "FDT +#%04x has no descendant node +%#04x\n",
+	       offset, target );
+	return -ENOENT;
+}
+
+/**
+ * Find parent node
+ *
+ * @v fdt		Device tree
+ * @v offset		Starting node offset
+ * @v parent		Parent node offset to fill in
+ * @ret rc		Return status code
+ */
+int fdt_parent ( struct fdt *fdt, unsigned int offset, unsigned int *parent ) {
+	struct fdt_descriptor desc;
+	int pdepth;
+	int depth;
+	int rc;
+
+	/* Find depth from root of tree */
+	depth = fdt_depth ( fdt, 0, offset );
+	if ( depth < 0 ) {
+		rc = depth;
+		return rc;
+	}
+	pdepth = ( depth - 1 );
+
+	/* Enter root node */
+	if ( ( rc = fdt_enter ( fdt, 0, &desc ) ) != 0 )
+		return rc;
+	*parent = desc.offset;
+
+	/* Find parent node */
+	for ( depth = 0 ; depth >= 0 ; depth += desc.depth ) {
+
+		/* Describe token */
+		if ( ( rc = fdt_next ( fdt, &desc ) ) != 0 ) {
+			DBGC ( fdt, "FDT +%#04x has malformed node: %s\n",
+			       offset, strerror ( rc ) );
+			return rc;
+		}
+
+		/* Record possible parent node */
+		if ( ( depth == pdepth ) && desc.name && ( ! desc.data ) )
+			*parent = desc.offset;
+
+		/* Check for target node */
+		if ( desc.offset == offset ) {
+			DBGC2 ( fdt, "FDT +%#04x has parent node at +%#04x\n",
+				offset, *parent );
+			return 0;
+		}
+	}
+
+	DBGC ( fdt, "FDT +#%04x has no parent node\n", offset );
+	return -ENOENT;
+}
+
+/**
  * Find child node
  *
  * @v fdt		Device tree
@@ -224,14 +346,8 @@ static int fdt_enter ( struct fdt *fdt, unsigned int offset,
 static int fdt_child ( struct fdt *fdt, unsigned int offset, const char *name,
 		       unsigned int *child ) {
 	struct fdt_descriptor desc;
-	const char *sep;
-	size_t name_len;
 	int depth;
 	int rc;
-
-	/* Determine length of name (may be terminated with NUL or '/') */
-	sep = strchr ( name, '/' );
-	name_len = ( sep ? ( ( size_t ) ( sep - name ) ) : strlen ( name ) );
 
 	/* Enter node */
 	if ( ( rc = fdt_enter ( fdt, offset, &desc ) ) != 0 )
@@ -252,8 +368,7 @@ static int fdt_child ( struct fdt *fdt, unsigned int offset, const char *name,
 			DBGC2 ( fdt, "FDT +%#04x has child node \"%s\" at "
 				"+%#04x\n", offset, desc.name, desc.offset );
 			assert ( desc.depth > 0 );
-			if ( ( strlen ( desc.name ) == name_len ) &&
-			     ( memcmp ( name, desc.name, name_len ) == 0 ) ) {
+			if ( fdt_match ( &desc, name ) ) {
 				*child = desc.offset;
 				return 0;
 			}
@@ -401,7 +516,7 @@ static int fdt_property ( struct fdt *fdt, unsigned int offset,
 				"+%#04x len %#zx\n", offset, desc->name,
 				desc->offset, desc->len );
 			assert ( desc->depth == 0 );
-			if ( strcmp ( name, desc->name ) == 0 ) {
+			if ( fdt_match ( desc, name ) ) {
 				DBGC2_HDA ( fdt, 0, desc->data, desc->len );
 				return 0;
 			}
