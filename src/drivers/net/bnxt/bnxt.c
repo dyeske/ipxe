@@ -26,65 +26,69 @@ static int bnxt_rx_complete ( struct net_device *dev, struct rx_pkt_cmpl *rx );
 void bnxt_link_evt ( struct bnxt *bp, struct hwrm_async_event_cmpl *evt );
 
 static struct pci_device_id bnxt_nics[] = {
-	PCI_ROM( 0x14e4, 0x1604, "14e4-1604", "14e4-1604", 0 ),
-	PCI_ROM( 0x14e4, 0x1605, "14e4-1605", "14e4-1605", 0 ),
-	PCI_ROM( 0x14e4, 0x1606, "14e4-1606", "14e4-1606", 0 ),
-	PCI_ROM( 0x14e4, 0x1609, "14e4-1609", "14e4-1609", 0 ),
-	PCI_ROM( 0x14e4, 0x1614, "14e4-1614", "14e4-1614", 0 ),
-	PCI_ROM( 0x14e4, 0x16c0, "14e4-16C0", "14e4-16C0", 0 ),
-	PCI_ROM( 0x14e4, 0x16c1, "14e4-16C1", "14e4-16C1", BNXT_FLAG_PCI_VF ),
-	PCI_ROM( 0x14e4, 0x16c8, "14e4-16C8", "14e4-16C8", 0 ),
-	PCI_ROM( 0x14e4, 0x16c9, "14e4-16C9", "14e4-16C9", 0 ),
-	PCI_ROM( 0x14e4, 0x16ca, "14e4-16CA", "14e4-16CA", 0 ),
-	PCI_ROM( 0x14e4, 0x16cc, "14e4-16CC", "14e4-16CC", 0 ),
-	PCI_ROM( 0x14e4, 0x16cd, "14e4-16CD", "14e4-16CD", 0 ),
-	PCI_ROM( 0x14e4, 0x16ce, "14e4-16CE", "14e4-16CE", 0 ),
-	PCI_ROM( 0x14e4, 0x16cf, "14e4-16CF", "14e4-16CF", 0 ),
-	PCI_ROM( 0x14e4, 0x16d0, "14e4-16D0", "14e4-16D0", 0 ),
-	PCI_ROM( 0x14e4, 0x16d1, "14e4-16D1", "14e4-16D1", 0 ),
-	PCI_ROM( 0x14e4, 0x16d2, "14e4-16D2", "14e4-16D2", 0 ),
-	PCI_ROM( 0x14e4, 0x16d4, "14e4-16D4", "14e4-16D4", 0 ),
-	PCI_ROM( 0x14e4, 0x16d5, "14e4-16D5", "14e4-16D5", 0 ),
-	PCI_ROM( 0x14e4, 0x16d6, "14e4-16D6", "14e4-16D6", 0 ),
-	PCI_ROM( 0x14e4, 0x16d7, "14e4-16D7", "14e4-16D7", 0 ),
-	PCI_ROM( 0x14e4, 0x16d8, "14e4-16D8", "14e4-16D8", 0 ),
-	PCI_ROM( 0x14e4, 0x16d9, "14e4-16D9", "14e4-16D9", 0 ),
-	PCI_ROM( 0x14e4, 0x16da, "14e4-16DA", "14e4-16DA", 0 ),
-	PCI_ROM( 0x14e4, 0x16db, "14e4-16DB", "14e4-16DB", 0 ),
-	PCI_ROM( 0x14e4, 0x16dc, "14e4-16DC", "14e4-16DC", BNXT_FLAG_PCI_VF ),
-	PCI_ROM( 0x14e4, 0x16de, "14e4-16DE", "14e4-16DE", 0 ),
-	PCI_ROM( 0x14e4, 0x16df, "14e4-16DF", "14e4-16DF", 0 ),
-	PCI_ROM( 0x14e4, 0x16e0, "14e4-16E0", "14e4-16E0", 0 ),
-	PCI_ROM( 0x14e4, 0x16e2, "14e4-16E2", "14e4-16E2", 0 ),
-	PCI_ROM( 0x14e4, 0x16e3, "14e4-16E3", "14e4-16E3", 0 ),
-	PCI_ROM( 0x14e4, 0x16e4, "14e4-16E4", "14e4-16E4", 0 ),
-	PCI_ROM( 0x14e4, 0x16e7, "14e4-16E7", "14e4-16E7", 0 ),
-	PCI_ROM( 0x14e4, 0x16e8, "14e4-16E8", "14e4-16E8", 0 ),
-	PCI_ROM( 0x14e4, 0x16e9, "14e4-16E9", "14e4-16E9", 0 ),
-	PCI_ROM( 0x14e4, 0x16ea, "14e4-16EA", "14e4-16EA", 0 ),
-	PCI_ROM( 0x14e4, 0x16eb, "14e4-16EB", "14e4-16EB", 0 ),
-	PCI_ROM( 0x14e4, 0x16ec, "14e4-16EC", "14e4-16EC", 0 ),
-	PCI_ROM( 0x14e4, 0x16ed, "14e4-16ED", "14e4-16ED", 0 ),
-	PCI_ROM( 0x14e4, 0x16ee, "14e4-16EE", "14e4-16EE", 0 ),
-	PCI_ROM( 0x14e4, 0x16ef, "14e4-16EF", "14e4-16EF", 0 ),
-	PCI_ROM( 0x14e4, 0x16f0, "14e4-16F0", "14e4-16F0", 0 ),
-	PCI_ROM( 0x14e4, 0x16f1, "14e4-16F1", "14e4-16F1", 0 ),
-	PCI_ROM( 0x14e4, 0x1750, "14e4-1750", "14e4-1750", 0 ),
-	PCI_ROM( 0x14e4, 0x1751, "14e4-1751", "14e4-1751", 0 ),
-	PCI_ROM( 0x14e4, 0x1752, "14e4-1752", "14e4-1752", 0 ),
-	PCI_ROM( 0x14e4, 0x1760, "14e4-1760", "14e4-1760", 0 ),
-	PCI_ROM( 0x14e4, 0x1800, "14e4-1800", "14e4-1800", 0 ),
-	PCI_ROM( 0x14e4, 0x1801, "14e4-1801", "14e4-1801", 0 ),
-	PCI_ROM( 0x14e4, 0x1802, "14e4-1802", "14e4-1802", 0 ),
-	PCI_ROM( 0x14e4, 0x1803, "14e4-1803", "14e4-1803", 0 ),
-	PCI_ROM( 0x14e4, 0x1804, "14e4-1804", "14e4-1804", 0 ),
-	PCI_ROM( 0x14e4, 0x1805, "14e4-1805", "14e4-1805", 0 ),
-	PCI_ROM( 0x14e4, 0x1806, "14e4-1806", "14e4-1806", BNXT_FLAG_PCI_VF ),
-	PCI_ROM( 0x14e4, 0x1807, "14e4-1807", "14e4-1807", BNXT_FLAG_PCI_VF ),
-	PCI_ROM( 0x14e4, 0x1808, "14e4-1808", "14e4-1808", BNXT_FLAG_PCI_VF ),
-	PCI_ROM( 0x14e4, 0x1809, "14e4-1809", "14e4-1809", BNXT_FLAG_PCI_VF ),
-	PCI_ROM( 0x14e4, 0xd802, "14e4-D802", "14e4-D802", 0 ),
-	PCI_ROM( 0x14e4, 0xd804, "14e4-D804", "14e4-D804", 0 ),
+	PCI_ROM( 0x14e4, 0x1604, "14e4-1604", "Broadcom BCM957454", 0 ),
+	PCI_ROM( 0x14e4, 0x1605, "14e4-1605", "Broadcom BCM957454 RDMA", 0 ),
+	PCI_ROM( 0x14e4, 0x1606, "14e4-1606", "Broadcom BCM957454 RDMA VF", BNXT_FLAG_PCI_VF ),
+	PCI_ROM( 0x14e4, 0x1607, "bcm957454-1607", "Broadcom BCM957454 HV VF", BNXT_FLAG_PCI_VF ),
+	PCI_ROM( 0x14e4, 0x1608, "bcm957454-1608", "Broadcom BCM957454 RDMA HV VF", BNXT_FLAG_PCI_VF ),
+	PCI_ROM( 0x14e4, 0x1609, "14e4-1609", "Broadcom BCM957454 VF", BNXT_FLAG_PCI_VF ),
+	PCI_ROM( 0x14e4, 0x1614, "14e4-1614", "Broadcom BCM957454", 0 ),
+	PCI_ROM( 0x14e4, 0x16bd, "bcm95741x-16bd", "Broadcom BCM95741x RDMA_HV_VF", BNXT_FLAG_PCI_VF ),
+	PCI_ROM( 0x14e4, 0x16c0, "14e4-16c0", "Broadcom BCM957417", 0 ),
+	PCI_ROM( 0x14e4, 0x16c1, "14e4-16c1", "Broadcom BCM95741x VF", BNXT_FLAG_PCI_VF ),
+	PCI_ROM( 0x14e4, 0x16c5, "bcm95741x-16c5", "Broadcom BCM95741x HV VF", BNXT_FLAG_PCI_VF ),
+	PCI_ROM( 0x14e4, 0x16c8, "14e4-16c8", "Broadcom BCM957301", 0 ),
+	PCI_ROM( 0x14e4, 0x16c9, "14e4-16c9", "Broadcom BCM957302", 0 ),
+	PCI_ROM( 0x14e4, 0x16ca, "14e4-16ca", "Broadcom BCM957304", 0 ),
+	PCI_ROM( 0x14e4, 0x16cc, "14e4-16cc", "Broadcom BCM957417 MF", 0 ),
+	PCI_ROM( 0x14e4, 0x16cd, "14e4-16cd", "Broadcom BCM958700", 0 ),
+	PCI_ROM( 0x14e4, 0x16ce, "14e4-16ce", "Broadcom BCM957311", 0 ),
+	PCI_ROM( 0x14e4, 0x16cf, "14e4-16cf", "Broadcom BCM957312", 0 ),
+	PCI_ROM( 0x14e4, 0x16d0, "14e4-16d0", "Broadcom BCM957402", 0 ),
+	PCI_ROM( 0x14e4, 0x16d1, "14e4-16d1", "Broadcom BCM957404", 0 ),
+	PCI_ROM( 0x14e4, 0x16d2, "14e4-16d2", "Broadcom BCM957406", 0 ),
+	PCI_ROM( 0x14e4, 0x16d4, "14e4-16d4", "Broadcom BCM957402 MF", 0 ),
+	PCI_ROM( 0x14e4, 0x16d5, "14e4-16d5", "Broadcom BCM957407", 0 ),
+	PCI_ROM( 0x14e4, 0x16d6, "14e4-16d6", "Broadcom BCM957412", 0 ),
+	PCI_ROM( 0x14e4, 0x16d7, "14e4-16d7", "Broadcom BCM957414", 0 ),
+	PCI_ROM( 0x14e4, 0x16d8, "14e4-16d8", "Broadcom BCM957416", 0 ),
+	PCI_ROM( 0x14e4, 0x16d9, "14e4-16d9", "Broadcom BCM957417", 0 ),
+	PCI_ROM( 0x14e4, 0x16da, "14e4-16da", "Broadcom BCM957402", 0 ),
+	PCI_ROM( 0x14e4, 0x16db, "14e4-16db", "Broadcom BCM957404", 0 ),
+	PCI_ROM( 0x14e4, 0x16dc, "14e4-16dc", "Broadcom BCM95741x VF", BNXT_FLAG_PCI_VF ),
+	PCI_ROM( 0x14e4, 0x16de, "14e4-16de", "Broadcom BCM957412 MF", 0 ),
+	PCI_ROM( 0x14e4, 0x16df, "14e4-16df", "Broadcom BCM957314", 0 ),
+	PCI_ROM( 0x14e4, 0x16e0, "14e4-16e0", "Broadcom BCM957317", 0 ),
+	PCI_ROM( 0x14e4, 0x16e2, "14e4-16e2", "Broadcom BCM957417", 0 ),
+	PCI_ROM( 0x14e4, 0x16e3, "14e4-16e3", "Broadcom BCM957416", 0 ),
+	PCI_ROM( 0x14e4, 0x16e4, "14e4-16e4", "Broadcom BCM957317", 0 ),
+	PCI_ROM( 0x14e4, 0x16e7, "14e4-16e7", "Broadcom BCM957404 MF", 0 ),
+	PCI_ROM( 0x14e4, 0x16e8, "14e4-16e8", "Broadcom BCM957406 MF", 0 ),
+	PCI_ROM( 0x14e4, 0x16e9, "14e4-16e9", "Broadcom BCM957407", 0 ),
+	PCI_ROM( 0x14e4, 0x16ea, "14e4-16ea", "Broadcom BCM957407 MF", 0 ),
+	PCI_ROM( 0x14e4, 0x16eb, "14e4-16eb", "Broadcom BCM957412 RDMA MF", 0 ),
+	PCI_ROM( 0x14e4, 0x16ec, "14e4-16ec", "Broadcom BCM957414 MF", 0 ),
+	PCI_ROM( 0x14e4, 0x16ed, "14e4-16ed", "Broadcom BCM957414 RDMA MF", 0 ),
+	PCI_ROM( 0x14e4, 0x16ee, "14e4-16ee", "Broadcom BCM957416 MF", 0 ),
+	PCI_ROM( 0x14e4, 0x16ef, "14e4-16ef", "Broadcom BCM957416 RDMA MF", 0 ),
+	PCI_ROM( 0x14e4, 0x16f0, "14e4-16f0", "Broadcom BCM957320", 0 ),
+	PCI_ROM( 0x14e4, 0x16f1, "14e4-16f1", "Broadcom BCM957320", 0 ),
+	PCI_ROM( 0x14e4, 0x1750, "14e4-1750", "Broadcom BCM957508", 0 ),
+	PCI_ROM( 0x14e4, 0x1751, "14e4-1751", "Broadcom BCM957504", 0 ),
+	PCI_ROM( 0x14e4, 0x1752, "14e4-1752", "Broadcom BCM957502", 0 ),
+	PCI_ROM( 0x14e4, 0x1760, "14e4-1760", "Broadcom BCM957608", 0 ),
+	PCI_ROM( 0x14e4, 0x1800, "14e4-1800", "Broadcom BCM957502 MF", 0 ),
+	PCI_ROM( 0x14e4, 0x1801, "14e4-1801", "Broadcom BCM957504 MF", 0 ),
+	PCI_ROM( 0x14e4, 0x1802, "14e4-1802", "Broadcom BCM957508 MF", 0 ),
+	PCI_ROM( 0x14e4, 0x1803, "14e4-1803", "Broadcom BCM957502 RDMA MF", 0 ),
+	PCI_ROM( 0x14e4, 0x1804, "14e4-1804", "Broadcom BCM957504 RDMA MF", 0 ),
+	PCI_ROM( 0x14e4, 0x1805, "14e4-1805", "Broadcom BCM957508 RDMA MF", 0 ),
+	PCI_ROM( 0x14e4, 0x1806, "14e4-1806", "Broadcom BCM9575xx VF", BNXT_FLAG_PCI_VF ),
+	PCI_ROM( 0x14e4, 0x1807, "14e4-1807", "Broadcom BCM9575xx RDMA VF", BNXT_FLAG_PCI_VF ),
+	PCI_ROM( 0x14e4, 0x1808, "14e4-1808", "Broadcom BCM9575xx HV VF", BNXT_FLAG_PCI_VF ),
+	PCI_ROM( 0x14e4, 0x1809, "14e4-1809", "Broadcom BCM9575xx RDMA HV VF", BNXT_FLAG_PCI_VF ),
+	PCI_ROM( 0x14e4, 0x1819, "bcm95760x-1819", "Broadcom BCM95760x VF", BNXT_FLAG_PCI_VF ),
+	PCI_ROM( 0x14e4, 0x181b, "bcm95760x-181b", "Broadcom BCM95760x HV VF", BNXT_FLAG_PCI_VF ),
 };
 
 /**
@@ -130,23 +134,23 @@ static int bnxt_get_pci_info ( struct bnxt *bp )
 
 	DBGP ( "%s\n", __func__ );
 	/* Disable Interrupt */
-	pci_read_word16 ( bp->pdev, PCI_COMMAND, &bp->cmd_reg );
+	pci_read_config_word ( bp->pdev, PCI_COMMAND, &bp->cmd_reg );
 	cmd_reg = bp->cmd_reg | PCI_COMMAND_INTX_DISABLE;
-	pci_write_word ( bp->pdev, PCI_COMMAND, cmd_reg );
-	pci_read_word16 ( bp->pdev, PCI_COMMAND, &cmd_reg );
+	pci_write_config_word ( bp->pdev, PCI_COMMAND, cmd_reg );
+	pci_read_config_word ( bp->pdev, PCI_COMMAND, &cmd_reg );
 
 	/* SSVID */
-	pci_read_word16 ( bp->pdev,
+	pci_read_config_word ( bp->pdev,
 			PCI_SUBSYSTEM_VENDOR_ID,
 			&bp->subsystem_vendor );
 
 	/* SSDID */
-	pci_read_word16 ( bp->pdev,
+	pci_read_config_word ( bp->pdev,
 			PCI_SUBSYSTEM_ID,
 			&bp->subsystem_device );
 
 	/* Function Number */
-	pci_read_byte ( bp->pdev,
+	pci_read_config_byte ( bp->pdev,
 			PCICFG_ME_REGISTER,
 			&bp->pf_num );
 
@@ -196,7 +200,7 @@ static void dev_p5_db ( struct bnxt *bp, u32 idx, u32 xid, u32 flag )
 
 	val = ( ( u64 )DBC_MSG_XID ( xid, flag ) << 32 ) |
 		( u64 )DBC_MSG_IDX ( idx );
-	write64 ( val, off );
+	writeq ( val, off );
 }
 
 static void dev_p7_db ( struct bnxt *bp, u32 idx, u32 xid, u32 flag, u32 epoch, u32 toggle )
@@ -210,7 +214,7 @@ static void dev_p7_db ( struct bnxt *bp, u32 idx, u32 xid, u32 flag, u32 epoch, 
 	        ( u64 )DBC_MSG_IDX ( idx ) |
 	        ( u64 )DBC_MSG_EPCH ( epoch ) |
 	        ( u64 )DBC_MSG_TOGGLE ( toggle );
-	write64 ( val, off );
+	writeq ( val, off );
 }
 
 static void bnxt_db_nq ( struct bnxt *bp )
@@ -223,7 +227,7 @@ static void bnxt_db_nq ( struct bnxt *bp )
 		dev_p5_db ( bp, ( u32 )bp->nq.cons_id,
 			 ( u32 )bp->nq_ring_id, DBC_DBC_TYPE_NQ_ARM );
 	else
-		write32 ( CMPL_DOORBELL_KEY_CMPL, ( bp->bar1 + 0 ) );
+		writel ( CMPL_DOORBELL_KEY_CMPL, ( bp->bar1 + 0 ) );
 }
 
 static void bnxt_db_cq ( struct bnxt *bp )
@@ -236,7 +240,7 @@ static void bnxt_db_cq ( struct bnxt *bp )
 		dev_p5_db ( bp, ( u32 )bp->cq.cons_id,
 			 ( u32 )bp->cq_ring_id, DBC_DBC_TYPE_CQ_ARMALL );
 	else
-		write32 ( CQ_DOORBELL_KEY_IDX ( bp->cq.cons_id ),
+		writel ( CQ_DOORBELL_KEY_IDX ( bp->cq.cons_id ),
 			( bp->bar1 + 0 ) );
 }
 
@@ -248,7 +252,7 @@ static void bnxt_db_rx ( struct bnxt *bp, u32 idx )
 	else if ( FLAG_TEST ( bp->flags, BNXT_FLAG_IS_CHIP_P5 ) )
 		dev_p5_db ( bp, idx, ( u32 )bp->rx_ring_id, DBC_DBC_TYPE_SRQ );
 	else
-		write32 ( RX_DOORBELL_KEY_RX | idx, ( bp->bar1 + 0 ) );
+		writel ( RX_DOORBELL_KEY_RX | idx, ( bp->bar1 + 0 ) );
 }
 
 static void bnxt_db_tx ( struct bnxt *bp, u32 idx )
@@ -259,7 +263,7 @@ static void bnxt_db_tx ( struct bnxt *bp, u32 idx )
 	else if ( FLAG_TEST ( bp->flags, BNXT_FLAG_IS_CHIP_P5 ) )
 		dev_p5_db ( bp, idx, ( u32 )bp->tx_ring_id, DBC_DBC_TYPE_SQ );
 	else
-		write32 ( ( u32 ) ( TX_DOORBELL_KEY_TX | idx ),
+		writel ( ( u32 ) ( TX_DOORBELL_KEY_TX | idx ),
 			( bp->bar1 + 0 ) );
 }
 
@@ -620,7 +624,7 @@ int bnxt_alloc_mem ( struct bnxt *bp )
 				     CQ_RING_BUFFER_SIZE, BNXT_DMA_ALIGNMENT );
 	bp->nq.bd_virt = dma_alloc ( bp->dma, &bp->nq_mapping,
 				     NQ_RING_BUFFER_SIZE, BNXT_DMA_ALIGNMENT );
-	test_if ( bp->hwrm_addr_req &&
+	if ( bp->hwrm_addr_req &&
 		bp->hwrm_addr_resp &&
 		bp->hwrm_addr_dma &&
 		bp->tx.bd_virt &&
@@ -651,10 +655,10 @@ static void hwrm_write_req ( struct bnxt *bp, void *req, u32 cnt )
 	u32 i = 0;
 
 	for ( i = 0; i < cnt; i++ ) {
-		write32 ( ( ( u32 * )req )[i],
+		writel ( ( ( u32 * )req )[i],
 			 ( bp->bar0 + GRC_COM_CHAN_BASE + ( i * 4 ) ) );
 	}
-	write32 ( 0x1, ( bp->bar0 + GRC_COM_CHAN_BASE + GRC_COM_CHAN_TRIG ) );
+	writel ( 0x1, ( bp->bar0 + GRC_COM_CHAN_BASE + GRC_COM_CHAN_TRIG ) );
 }
 
 static void short_hwrm_cmd_req ( struct bnxt *bp, u16 len )
@@ -689,7 +693,7 @@ static int wait_resp ( struct bnxt *bp, u32 tmo, u16 len, const char *func )
 
 	for ( idx = 0; idx < wait_cnt; idx++ ) {
 		resp_len = resp->resp_len;
-		test_if ( resp->seq_id == req->seq_id &&
+		if ( resp->seq_id == req->seq_id &&
 			resp->req_type == req->req_type &&
 			ptr[resp_len - 1] == 1 ) {
 			bp->last_resp_code = resp->error_code;
@@ -735,7 +739,7 @@ static int bnxt_hwrm_ver_get ( struct bnxt *bp )
 		resp->chip_bond_id << 8 |
 		resp->chip_platform_type;
 	bp->chip_num = resp->chip_num;
-	test_if ( ( resp->dev_caps_cfg & SHORT_CMD_SUPPORTED ) &&
+	if ( ( resp->dev_caps_cfg & SHORT_CMD_SUPPORTED ) &&
 		 ( resp->dev_caps_cfg & SHORT_CMD_REQUIRED ) )
 		FLAG_SET ( bp->flags, BNXT_FLAG_HWRM_SHORT_CMD_SUPP );
 	bp->hwrm_max_ext_req_len = resp->max_ext_req_len;
@@ -1253,24 +1257,24 @@ static int bnxt_get_link_speed ( struct bnxt *bp )
 
 	DBGP ( "%s\n", __func__ );
 	if ( ! ( FLAG_TEST (bp->flags, BNXT_FLAG_IS_CHIP_P7 ) ) ) {
-	        test_if ( bnxt_hwrm_nvm_get_variable_req ( bp, 4,
+	        if ( bnxt_hwrm_nvm_get_variable_req ( bp, 4,
 		        ( u16 )LINK_SPEED_DRV_NUM,
 		        1, ( u16 )bp->port_idx ) != STATUS_SUCCESS )
 		        return STATUS_FAILURE;
 	        bp->link_set = SET_LINK ( *ptr32, SPEED_DRV_MASK, SPEED_DRV_SHIFT );
-	        test_if ( bnxt_hwrm_nvm_get_variable_req ( bp, 4,
+	        if ( bnxt_hwrm_nvm_get_variable_req ( bp, 4,
 		        ( u16 )D3_LINK_SPEED_FW_NUM, 1,
 		        ( u16 )bp->port_idx ) != STATUS_SUCCESS )
 		        return STATUS_FAILURE;
 	        bp->link_set |= SET_LINK ( *ptr32, D3_SPEED_FW_MASK,
 				D3_SPEED_FW_SHIFT );
 	}
-	test_if ( bnxt_hwrm_nvm_get_variable_req ( bp, 4,
+	if ( bnxt_hwrm_nvm_get_variable_req ( bp, 4,
 		( u16 )LINK_SPEED_FW_NUM,
 		1, ( u16 )bp->port_idx ) != STATUS_SUCCESS )
 		return STATUS_FAILURE;
 	bp->link_set |= SET_LINK ( *ptr32, SPEED_FW_MASK, SPEED_FW_SHIFT );
-	test_if ( bnxt_hwrm_nvm_get_variable_req ( bp, 1,
+	if ( bnxt_hwrm_nvm_get_variable_req ( bp, 1,
 		 ( u16 )PORT_CFG_LINK_SETTINGS_MEDIA_AUTO_DETECT_NUM,
 		1, ( u16 )bp->port_idx ) != STATUS_SUCCESS )
 		return STATUS_FAILURE;

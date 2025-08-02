@@ -23,4 +23,6 @@ IOMAP_INLINE ( svpage, io_to_bus ) ( volatile const void *io_addr ) {
 	return ( ( intptr_t ) io_addr );
 }
 
+extern void * svpage_dma32 ( void );
+
 #endif /* _IPXE_SVPAGE_H */

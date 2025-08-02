@@ -386,8 +386,6 @@ static int efi_getchar ( void ) {
 static int efi_iskey ( void ) {
 	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
 	EFI_SIMPLE_TEXT_INPUT_PROTOCOL *conin = efi_systab->ConIn;
-	EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL *conin_ex = efi_conin_ex;
-	EFI_EVENT *event;
 	EFI_STATUS efirc;
 
 	/* If we are mid-sequence, we are always ready */
@@ -395,8 +393,7 @@ static int efi_iskey ( void ) {
 		return 1;
 
 	/* Check to see if the WaitForKey event has fired */
-	event = ( conin_ex ? conin_ex->WaitForKeyEx : conin->WaitForKey );
-	if ( ( efirc = bs->CheckEvent ( event ) ) == 0 )
+	if ( ( efirc = bs->CheckEvent ( conin->WaitForKey ) ) == 0 )
 		return 1;
 
 	return 0;
@@ -448,5 +445,6 @@ static void efi_console_init ( void ) {
  * EFI console initialisation function
  */
 struct init_fn efi_console_init_fn __init_fn ( INIT_EARLY ) = {
+	.name = "eficonsole",
 	.initialise = efi_console_init,
 };

@@ -86,6 +86,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #define ERRFILE_null_smbios	       ( ERRFILE_CORE | 0x002e0000 )
 #define ERRFILE_efi_open	       ( ERRFILE_CORE | 0x002f0000 )
 #define ERRFILE_efi_table	       ( ERRFILE_CORE | 0x00300000 )
+#define ERRFILE_efi_connect	       ( ERRFILE_CORE | 0x00310000 )
 
 #define ERRFILE_eisa		     ( ERRFILE_DRIVER | 0x00000000 )
 #define ERRFILE_isa		     ( ERRFILE_DRIVER | 0x00010000 )
@@ -235,6 +236,8 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #define ERRFILE_atl2_hw		     ( ERRFILE_DRIVER | 0x00d90000 )
 #define ERRFILE_devtree		     ( ERRFILE_DRIVER | 0x00da0000 )
 #define ERRFILE_cgem		     ( ERRFILE_DRIVER | 0x00db0000 )
+#define ERRFILE_dwmac		     ( ERRFILE_DRIVER | 0x00dc0000 )
+#define ERRFILE_dwusb		     ( ERRFILE_DRIVER | 0x00dd0000 )
 
 #define ERRFILE_aoe			( ERRFILE_NET | 0x00000000 )
 #define ERRFILE_arp			( ERRFILE_NET | 0x00010000 )

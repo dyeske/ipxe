@@ -68,14 +68,16 @@ struct dma_operations {
 	 * @ret rc		Return status code
 	 */
 	int ( * map ) ( struct dma_device *dma, struct dma_mapping *map,
-			physaddr_t addr, size_t len, int flags );
+			void *addr, size_t len, int flags );
 	/**
 	 * Unmap buffer
 	 *
 	 * @v dma		DMA device
 	 * @v map		DMA mapping
+	 * @v len		Used length
 	 */
-	void ( * unmap ) ( struct dma_device *dma, struct dma_mapping *map );
+	void ( * unmap ) ( struct dma_device *dma, struct dma_mapping *map,
+			   size_t len );
 	/**
 	 * Allocate and map DMA-coherent buffer
 	 *
@@ -178,8 +180,7 @@ struct dma_operations {
  */
 static inline __always_inline int
 DMAAPI_INLINE ( flat, dma_map ) ( struct dma_device *dma,
-				  struct dma_mapping *map,
-				  physaddr_t addr __unused,
+				  struct dma_mapping *map, void *addr __unused,
 				  size_t len __unused, int flags __unused ) {
 
 	/* Increment mapping count (for debugging) */
@@ -195,9 +196,11 @@ DMAAPI_INLINE ( flat, dma_map ) ( struct dma_device *dma,
  * Unmap buffer
  *
  * @v map		DMA mapping
+ * @v len		Used length
  */
 static inline __always_inline void
-DMAAPI_INLINE ( flat, dma_unmap ) ( struct dma_mapping *map ) {
+DMAAPI_INLINE ( flat, dma_unmap ) ( struct dma_mapping *map,
+				    size_t len __unused ) {
 
 	/* Decrement mapping count (for debugging) */
 	if ( DBG_LOG ) {
@@ -319,33 +322,35 @@ DMAAPI_INLINE ( flat, dma_set_mask ) ( struct dma_device *dma __unused,
 }
 
 /**
- * Get DMA address from physical address
+ * Get DMA address from virtual address
  *
  * @v map		DMA mapping
- * @v addr		Physical address within the mapped region
+ * @v addr		Address within the mapped region
  * @ret addr		Device-side DMA address
  */
 static inline __always_inline physaddr_t
-DMAAPI_INLINE ( flat, dma_phys ) ( struct dma_mapping *map __unused,
-				   physaddr_t addr ) {
+DMAAPI_INLINE ( flat, dma ) ( struct dma_mapping *map __unused, void *addr ) {
 
 	/* Use physical address as device address */
-	return addr;
+	return virt_to_phys ( addr );
 }
 
 /**
- * Get DMA address from physical address
+ * Get DMA address from virtual address
  *
  * @v map		DMA mapping
- * @v addr		Physical address within the mapped region
+ * @v addr		Address within the mapped region
  * @ret addr		Device-side DMA address
  */
 static inline __always_inline physaddr_t
-DMAAPI_INLINE ( op, dma_phys ) ( struct dma_mapping *map, physaddr_t addr ) {
+DMAAPI_INLINE ( op, dma ) ( struct dma_mapping *map, void *addr ) {
 
 	/* Adjust physical address using mapping offset */
-	return ( addr + map->offset );
+	return ( virt_to_phys ( addr ) + map->offset );
 }
+
+/* Include all architecture-dependent DMA API headers */
+#include <bits/dma.h>
 
 /**
  * Map buffer for DMA
@@ -358,14 +363,15 @@ DMAAPI_INLINE ( op, dma_phys ) ( struct dma_mapping *map, physaddr_t addr ) {
  * @ret rc		Return status code
  */
 int dma_map ( struct dma_device *dma, struct dma_mapping *map,
-	      physaddr_t addr, size_t len, int flags );
+	      void *addr, size_t len, int flags );
 
 /**
  * Unmap buffer
  *
  * @v map		DMA mapping
+ * @v len		Used length
  */
-void dma_unmap ( struct dma_mapping *map );
+void dma_unmap ( struct dma_mapping *map, size_t len );
 
 /**
  * Allocate and map DMA-coherent buffer
@@ -418,27 +424,13 @@ void dma_ufree ( struct dma_mapping *map, void *addr, size_t len );
 void dma_set_mask ( struct dma_device *dma, physaddr_t mask );
 
 /**
- * Get DMA address from physical address
- *
- * @v map		DMA mapping
- * @v addr		Physical address within the mapped region
- * @ret addr		Device-side DMA address
- */
-physaddr_t dma_phys ( struct dma_mapping *map, physaddr_t addr );
-
-/**
  * Get DMA address from virtual address
  *
  * @v map		DMA mapping
- * @v addr		Virtual address within the mapped region
+ * @v addr		Address within the mapped region
  * @ret addr		Device-side DMA address
  */
-static inline __always_inline physaddr_t dma ( struct dma_mapping *map,
-					       void *addr ) {
-
-	/* Get DMA address from corresponding physical address */
-	return dma_phys ( map, virt_to_phys ( addr ) );
-}
+physaddr_t dma ( struct dma_mapping *map, void *addr );
 
 /**
  * Check if DMA unmapping is required

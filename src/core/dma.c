@@ -47,7 +47,7 @@ PROVIDE_DMAAPI_INLINE ( flat, dma_free );
 PROVIDE_DMAAPI_INLINE ( flat, dma_umalloc );
 PROVIDE_DMAAPI_INLINE ( flat, dma_ufree );
 PROVIDE_DMAAPI_INLINE ( flat, dma_set_mask );
-PROVIDE_DMAAPI_INLINE ( flat, dma_phys );
+PROVIDE_DMAAPI_INLINE ( flat, dma );
 
 /******************************************************************************
  *
@@ -67,7 +67,7 @@ PROVIDE_DMAAPI_INLINE ( flat, dma_phys );
  * @ret rc		Return status code
  */
 static int dma_op_map ( struct dma_device *dma, struct dma_mapping *map,
-			physaddr_t addr, size_t len, int flags ) {
+			void *addr, size_t len, int flags ) {
 	struct dma_operations *op = dma->op;
 
 	if ( ! op )
@@ -79,13 +79,14 @@ static int dma_op_map ( struct dma_device *dma, struct dma_mapping *map,
  * Unmap buffer
  *
  * @v map		DMA mapping
+ * @v len		Used length
  */
-static void dma_op_unmap ( struct dma_mapping *map ) {
+static void dma_op_unmap ( struct dma_mapping *map, size_t len ) {
 	struct dma_device *dma = map->dma;
 
 	assert ( dma != NULL );
 	assert ( dma->op != NULL );
-	dma->op->unmap ( dma, map );
+	dma->op->unmap ( dma, map, len );
 }
 
 /**
@@ -175,4 +176,4 @@ PROVIDE_DMAAPI ( op, dma_free, dma_op_free );
 PROVIDE_DMAAPI ( op, dma_umalloc, dma_op_umalloc );
 PROVIDE_DMAAPI ( op, dma_ufree, dma_op_ufree );
 PROVIDE_DMAAPI ( op, dma_set_mask, dma_op_set_mask );
-PROVIDE_DMAAPI_INLINE ( op, dma_phys );
+PROVIDE_DMAAPI_INLINE ( op, dma );
