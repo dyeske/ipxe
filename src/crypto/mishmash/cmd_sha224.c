@@ -1,10 +1,10 @@
 /*
- * Copyright (C) 2013 Michael Brown <mbrown@fensystems.co.uk>.
+ * Copyright (C) 2025 Michael Brown <mbrown@fensystems.co.uk>.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
  * published by the Free Software Foundation; either version 2 of the
- * License, or any later version.
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -23,46 +23,11 @@
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
-/** @file
- *
- * Neighbour management commands
- *
- */
+#include <ipxe/sha256.h>
+#include <hci/digest_cmd.h>
 
-#include <getopt.h>
-#include <ipxe/parseopt.h>
-#include <ipxe/command.h>
-#include <usr/neighmgmt.h>
-
-/** "nstat" options */
-struct nstat_options {};
-
-/** "nstat" option list */
-static struct option_descriptor nstat_opts[] = {};
-
-/** "nstat" command descriptor */
-static struct command_descriptor nstat_cmd =
-	COMMAND_DESC ( struct nstat_options, nstat_opts, 0, 0, NULL );
-
-/**
- * The "nstat" command
- *
- * @v argc		Argument count
- * @v argv		Argument list
- * @ret rc		Return status code
- */
-static int nstat_exec ( int argc, char **argv ) {
-	struct nstat_options opts;
-	int rc;
-
-	/* Parse options */
-	if ( ( rc = parse_options ( argc, argv, &nstat_cmd, &opts ) ) != 0)
-		return rc;
-
-	nstat();
-
-	return 0;
+static int sha224sum_exec ( int argc, char **argv ) {
+	return digest_exec ( argc, argv, &sha224_algorithm );
 }
 
-/** Neighbour management commands */
-COMMAND ( nstat, nstat_exec );
+COMMAND ( sha224sum, sha224sum_exec );

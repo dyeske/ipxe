@@ -176,8 +176,6 @@ extern int fdt_path ( struct fdt *fdt, const char *path,
 		      unsigned int *offset );
 extern int fdt_alias ( struct fdt *fdt, const char *name,
 		       unsigned int *offset );
-extern int fdt_phandle ( struct fdt *fdt, uint32_t phandle,
-			 unsigned int *offset );
 extern const char * fdt_strings ( struct fdt *fdt, unsigned int offset,
 				  const char *name, unsigned int *count );
 extern const char * fdt_string ( struct fdt *fdt, unsigned int offset,
@@ -189,8 +187,11 @@ extern int fdt_u64 ( struct fdt *fdt, unsigned int offset, const char *name,
 		     uint64_t *value );
 extern int fdt_u32 ( struct fdt *fdt, unsigned int offset, const char *name,
 		     uint32_t *value );
+extern uint32_t fdt_phandle ( struct fdt *fdt, unsigned int offset );
 extern void fdt_reg_cells ( struct fdt *fdt, unsigned int offset,
 			    struct fdt_reg_cells *regs );
+extern int fdt_parent_reg_cells ( struct fdt *fdt, unsigned int offset,
+				  struct fdt_reg_cells *regs );
 extern int fdt_reg_count ( struct fdt *fdt, unsigned int offset,
 			   struct fdt_reg_cells *regs );
 extern int fdt_reg_address ( struct fdt *fdt, unsigned int offset,
@@ -199,6 +200,7 @@ extern int fdt_reg_address ( struct fdt *fdt, unsigned int offset,
 extern int fdt_reg_size ( struct fdt *fdt, unsigned int offset,
 			  struct fdt_reg_cells *regs, unsigned int index,
 			  uint64_t *size );
+extern int fdt_reg ( struct fdt *fdt, unsigned int offset, uint64_t *region );
 extern int fdt_mac ( struct fdt *fdt, unsigned int offset,
 		     struct net_device *netdev );
 extern int fdt_parse ( struct fdt *fdt, struct fdt_header *hdr,

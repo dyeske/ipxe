@@ -1,10 +1,8 @@
 /*
- * Copyright (C) 2014 Michael Brown <mbrown@fensystems.co.uk>.
- *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
  * published by the Free Software Foundation; either version 2 of the
- * License, or any later version.
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -23,47 +21,41 @@
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
-#include <stdio.h>
-#include <getopt.h>
-#include <ipxe/command.h>
-#include <ipxe/parseopt.h>
-#include <usr/ipstat.h>
+#include <config/crypto.h>
 
 /** @file
  *
- * IP statistics commands
+ * Digest command configuration
  *
  */
 
-/** "ipstat" options */
-struct ipstat_options {};
+PROVIDE_REQUIRING_SYMBOL();
 
-/** "ipstat" option list */
-static struct option_descriptor ipstat_opts[] = {};
+/* MD4 */
+#if defined ( CRYPTO_DIGEST_MD4 )
+REQUIRE_OBJECT ( cmd_md4 );
+#endif
 
-/** "ipstat" command descriptor */
-static struct command_descriptor ipstat_cmd =
-	COMMAND_DESC ( struct ipstat_options, ipstat_opts, 0, 0, NULL );
+/* MD5 is present by default for historical reasons */
 
-/**
- * The "ipstat" command
- *
- * @v argc		Argument count
- * @v argv		Argument list
- * @ret rc		Return status code
- */
-static int ipstat_exec ( int argc, char **argv ) {
-	struct ipstat_options opts;
-	int rc;
+/* SHA-1 is present by default for historical reasons */
 
-	/* Parse options */
-	if ( ( rc = parse_options ( argc, argv, &ipstat_cmd, &opts ) ) != 0 )
-		return rc;
+/* SHA-224 */
+#if defined ( CRYPTO_DIGEST_SHA224 )
+REQUIRE_OBJECT ( cmd_sha224 );
+#endif
 
-	ipstat();
+/* SHA-256 */
+#if defined ( CRYPTO_DIGEST_SHA256 )
+REQUIRE_OBJECT ( cmd_sha256 );
+#endif
 
-	return 0;
-}
+/* SHA-384 */
+#if defined ( CRYPTO_DIGEST_SHA384 )
+REQUIRE_OBJECT ( cmd_sha384 );
+#endif
 
-/** Routing table management commands */
-COMMAND ( ipstat, ipstat_exec );
+/* SHA-512 */
+#if defined ( CRYPTO_DIGEST_SHA512 )
+REQUIRE_OBJECT ( cmd_sha512 );
+#endif
