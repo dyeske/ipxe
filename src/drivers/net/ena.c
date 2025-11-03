@@ -468,7 +468,10 @@ static int ena_create_sq ( struct ena_nic *ena, struct ena_sq *sq,
 	req->create_sq.policy = cpu_to_le16 ( sq->policy );
 	req->create_sq.cq_id = cpu_to_le16 ( cq->id );
 	req->create_sq.count = cpu_to_le16 ( sq->count );
-	req->create_sq.address = cpu_to_le64 ( virt_to_bus ( sq->sqe.raw ) );
+	if ( ! ( sq->policy & ENA_SQ_DEVICE_MEMORY ) ) {
+		req->create_sq.address =
+			cpu_to_le64 ( virt_to_bus ( sq->sqe.raw ) );
+	}
 
 	/* Issue request */
 	if ( ( rc = ena_admin ( ena, req, &rsp ) ) != 0 ) {
@@ -494,7 +497,7 @@ static int ena_create_sq ( struct ena_nic *ena, struct ena_sq *sq,
 	sq->phase = ENA_SQE_PHASE;
 
 	/* Calculate fill level */
-	sq->fill = sq->max;
+	sq->fill = sq->count;
 	if ( sq->fill > cq->actual )
 		sq->fill = cq->actual;
 
@@ -1358,11 +1361,11 @@ static int ena_probe ( struct pci_device *pci ) {
 	ena->acq.phase = ENA_ACQ_PHASE;
 	ena_cq_init ( &ena->tx.cq, ENA_TX_COUNT,
 		      sizeof ( ena->tx.cq.cqe.tx[0] ) );
-	ena_sq_init ( &ena->tx.sq, ENA_SQ_TX, ENA_TX_COUNT, ENA_TX_COUNT,
+	ena_sq_init ( &ena->tx.sq, ENA_SQ_TX, ENA_TX_COUNT,
 		      sizeof ( ena->tx.sq.sqe.tx[0] ), ena->tx_ids );
 	ena_cq_init ( &ena->rx.cq, ENA_RX_COUNT,
 		      sizeof ( ena->rx.cq.cqe.rx[0] ) );
-	ena_sq_init ( &ena->rx.sq, ENA_SQ_RX, ENA_RX_COUNT, ENA_RX_FILL,
+	ena_sq_init ( &ena->rx.sq, ENA_SQ_RX, ENA_RX_COUNT,
 		      sizeof ( ena->rx.sq.sqe.rx[0] ), ena->rx_ids );
 
 	/* Fix up PCI device */
