@@ -204,6 +204,10 @@ ifneq ($(strip $(filter-out $(NO_DEP_TARGETS),$(MAKECMDGOALS))),)
 NEED_DEPS	:= 1
 endif
 
+# Mark the various build-tracking files as unannotated
+#
+UNANNOTATED	:= $(BIN)/.%.list
+
 ###############################################################################
 #
 # Select build architecture and platform based on $(BIN)
@@ -608,7 +612,8 @@ EMBED_ALL	:= $(foreach i,$(call seq,1,$(words $(EMBEDDED_FILES))),\
 		     EMBED ( $(i), \"$(word $(i), $(EMBEDDED_FILES))\",\
 			     \"$(notdir $(word $(i),$(EMBEDDED_FILES)))\" ))
 
-embedded_DEPS += $(EMBEDDED_FILES) $(EMBEDDED_LIST)
+embedded_DEPS	+= $(EMBEDDED_FILES) $(EMBEDDED_LIST)
+UNANNOTATED	+= $(EMBEDDED_FILES) $(EMBEDDED_LIST)
 
 CFLAGS_embedded = -DEMBED_ALL="$(EMBED_ALL)"
 
@@ -637,7 +642,8 @@ TRUSTED_FPS	:= $(foreach CERT,$(TRUSTED_CERTS),\
 			 $(shell $(OPENSSL) x509 -in $(CERT) -noout -sha256 \
 				 -fingerprint))))$(COMMA))
 
-rootcert_DEPS += $(TRUSTED_FILES) $(TRUSTED_LIST)
+rootcert_DEPS	+= $(TRUSTED_FILES) $(TRUSTED_LIST)
+UNANNOTATED	+= $(TRUSTED_FILES) $(TRUSTED_LIST)
 
 CFLAGS_rootcert += $(if $(TRUST_EXT),-DALLOW_TRUST_OVERRIDE=$(TRUST_EXT))
 CFLAGS_rootcert += $(if $(TRUSTED_FPS),-DTRUSTED="$(TRUSTED_FPS)")
@@ -688,7 +694,8 @@ CERT_ALL := $(foreach i,$(call seq,1,$(CERT_COUNT)),\
 
 endif
 
-certstore_DEPS += $(CERT_LIST) $(CERT_FILES) $(CERT_PEMS) $(CERT_DERS)
+certstore_DEPS	+= $(CERT_LIST) $(CERT_FILES) $(CERT_PEMS) $(CERT_DERS)
+UNANNOTATED	+= $(CERT_LIST) $(CERT_FILES) $(CERT_PEMS) $(CERT_DERS)
 
 CFLAGS_certstore += -DCERT_ALL="$(CERT_ALL)"
 
@@ -721,12 +728,14 @@ ifdef PRIVKEY
 $(PRIVKEY_INC) : $(PRIVKEY) $(PRIVKEY_LIST)
 	$(Q)$(OPENSSL) rsa -in $< -outform DER -out $@
 
-privkey_DEPS += $(PRIVKEY_INC)
+privkey_DEPS	+= $(PRIVKEY_INC)
+UNANNOTATED	+= $(PRIVKEY_INC)
 endif
 
 CLEANUP += $(BIN)/.private_key.*
 
-privkey_DEPS += $(PRIVKEY_LIST)
+privkey_DEPS	+= $(PRIVKEY_LIST)
+UNANNOTATED	+= $(PRIVKEY_LIST)
 
 CFLAGS_privkey += $(if $(PRIVKEY),-DPRIVATE_KEY="\"$(PRIVKEY_INC)\"")
 
@@ -1246,6 +1255,7 @@ $(BIN)/version.%.o : core/version.c $(MAKEDEPS) $(version_DEPS) $(GIT_INDEX)
 		-DVERSION="\"$(VERSION)\"" \
 		-c $< -o $@
 	$(Q)$(OBJCOPY) --prefix-symbols=$(SYMBOL_PREFIX) $@
+$(BIN)/deps/core/version.c.d : $(version_DEPS)
 
 # Build an intermediate object file from the objects required for the
 # specified target.
@@ -1300,9 +1310,7 @@ $(BIN)/%.nodeps : $(BIN)/%.tmp
 # Get annotated dependency list for the specified target
 #
 define annotated_deps_list
-	$(filter-out config/local/%.h,\
-	  $(filter-out $(BIN)/.%.list,\
-	    $(call deps_list,$(1))))
+	$(filter-out $(UNANNOTATED),$(call deps_list,$(1)))
 endef
 
 # Get dependency list missing specified declaration for the specified target
@@ -1467,6 +1475,12 @@ endif
 $(BIN)/etherboot.% : $(BIN)/ipxe.%
 	ln -sf $(notdir $<) $@
 
+# Filter out non-permitted drivers if security flag is set
+#
+ifneq ($(SECUREBOOT),)
+DRIVERS_ipxe	:= $(filter $(DRIVERS_SECBOOT),$(DRIVERS_ipxe))
+endif
+
 endif # defined(BIN)
 
 ###############################################################################
@@ -1533,6 +1547,8 @@ $(CONFIG_LOCAL_HEADERS) :
 
 .PRECIOUS : $(CONFIG_LOCAL_HEADERS)
 
+UNANNOTATED	+= $(CONFIG_LOCAL_HEADERS)
+
 ifneq ($(CONFIG),)
 
 CONFIG_LOCAL_NAMED_HEADERS := $(foreach HEADER,$(CONFIG_HEADERS),\
@@ -1543,6 +1559,8 @@ $(CONFIG_LOCAL_NAMED_HEADERS) :
 	$(Q)$(TOUCH) $@
 
 .PRECIOUS : $(CONFIG_LOCAL_NAMED_HEADERS)
+
+UNANNOTATED	+= $(CONFIG_LOCAL_NAMED_HEADERS)
 
 endif
 
@@ -1590,6 +1608,75 @@ ifdef BIN
 
 $(BIN)/%.bxs : $(BIN)/%.tmp
 	$(NM) $< | cut -d" " -f1,3 > $@
+
+endif # defined(BIN)
+
+###############################################################################
+#
+# Versioning
+#
+
+ifdef BIN
+
+REPOURL		:= https://github.com/ipxe/ipxe
+ifeq ($(EXTRAVERSION),)
+RELNAME		:= v$(firstword $(VERSION))
+CLMARKER	:= [$(RELNAME)]
+SRCNAME		:= ipxe-$(firstword $(VERSION))
+SRCURL		:= $(REPOURL)/archive/$(RELNAME)
+BINURL		:= $(REPOURL)/releases/download/$(RELNAME)
+else
+RELNAME		:=
+CLMARKER	:= [Unreleased]
+SRCNAME		:= ipxe
+SRCURL		:= $(REPOURL)/archive/$(GITVERSION)
+BINURL		:= https://boot.ipxe.org
+endif
+
+# Generate version number record
+#
+$(BIN)/version.txt : $(MAKEDEPS)
+	$(QM)$(ECHO) "  [VERSION] $@"
+	$(Q)$(ECHO) "$(VERSION)" > $@
+
+# Generate release name
+#
+$(BIN)/relname.txt : $(MAKEDEPS)
+	$(QM)$(ECHO) "  [RELNAME] $@"
+	$(Q)$(ECHO) "$(RELNAME)" > $@
+
+# Generate changelog section
+#
+$(BIN)/changes.md : ../CHANGELOG.md $(MAKEDEPS)
+	$(QM)$(ECHO) "  [CHANGES] $@"
+	$(Q)$(PANDOC) -f gfm -t gfm --columns 10000 $< | \
+	    awk -v RS='\n\n## ' -v marker='$(CLMARKER)' \
+		'index ( $$0, marker ) == 1 { print }' > $@
+	$(Q)if [ ! -s $@ ] ; then \
+	    echo "Missing $(CLMARKER) in $<" >&2 ; \
+	    exit 1 ; \
+	fi
+
+# Generate release title
+#
+$(BIN)/reltitle.txt : $(BIN)/changes.md $(MAKEDEPS)
+	$(QM)$(ECHO) "  [RELTITLE] $@"
+	$(Q)head -1 $< | sed -E \
+	    's/^\[(.*)\]\(.+\)\s+(.+)$$/\1 (\2)/; t; s/^\[(.*)\].*$$/\1/' > $@
+
+# Generate release description
+#
+$(BIN)/reldesc.md : ../RELNOTES.tmpl.md $(MAKEDEPS)
+	$(QM)$(ECHO) "  [RELDESC] $@"
+	$(Q)SRCNAME="$(SRCNAME)" SRCURL="$(SRCURL)" BINURL="$(BINURL)" \
+	    $(ENVSUBST) '$$SRCNAME $$SRCURL $$BINURL' < $< | \
+	    $(PANDOC) -f gfm -t gfm --columns 10000 > $@
+
+# Generate release notes
+#
+$(BIN)/relnotes.md : $(BIN)/reldesc.md $(BIN)/changes.md $(MAKEDEPS)
+	$(QM)$(ECHO) "  [RELNOTES] $@"
+	$(Q)( cat $(BIN)/reldesc.md ; tail -n +2 $(BIN)/changes.md ) > $@
 
 endif # defined(BIN)
 

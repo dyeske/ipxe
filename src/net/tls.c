@@ -30,7 +30,6 @@ FILE_SECBOOT ( PERMITTED );
 #include <stdlib.h>
 #include <stdarg.h>
 #include <string.h>
-#include <time.h>
 #include <errno.h>
 #include <byteswap.h>
 #include <ipxe/pending.h>
@@ -199,6 +198,8 @@ static LIST_HEAD ( tls_sessions );
 static void tls_tx_resume_all ( struct tls_session *session );
 static struct io_buffer * tls_alloc_iob ( struct tls_connection *tls,
 					  size_t len );
+static int tls_send_alert ( struct tls_connection *tls, unsigned int level,
+			    unsigned int description );
 static int tls_send_record ( struct tls_connection *tls, unsigned int type,
 			     struct io_buffer *iobuf );
 static int tls_send_plaintext ( struct tls_connection *tls, unsigned int type,
@@ -420,6 +421,9 @@ static void free_tls ( struct refcnt *refcnt ) {
  * @v rc		Status code
  */
 static void tls_close ( struct tls_connection *tls, int rc ) {
+
+	/* Send closure alert */
+	tls_send_alert ( tls, TLS_ALERT_WARNING, TLS_ALERT_CLOSE_NOTIFY );
 
 	/* Remove pending operations, if applicable */
 	pending_put ( &tls->client.negotiation );
@@ -2000,6 +2004,29 @@ static int tls_send_finished ( struct tls_connection *tls ) {
 }
 
 /**
+ * Transmit Alert record
+ *
+ * @v tls		TLS connection
+ * @v level		Alert level
+ * @v description	Alert description
+ * @ret rc		Return status code
+ */
+static int tls_send_alert ( struct tls_connection *tls, unsigned int level,
+			    unsigned int description ) {
+	const struct {
+		uint8_t level;
+		uint8_t description;
+	} __attribute__ (( packed )) alert = {
+		.level = level,
+		.description = description,
+	};
+
+	/* Send record */
+	return tls_send_plaintext ( tls, TLS_TYPE_ALERT, &alert,
+				    sizeof ( alert ) );
+}
+
+/**
  * Receive new Change Cipher record
  *
  * @v tls		TLS connection
@@ -2061,8 +2088,16 @@ static int tls_new_alert ( struct tls_connection *tls,
 	/* Handle alert */
 	switch ( alert->level ) {
 	case TLS_ALERT_WARNING:
-		DBGC ( tls, "TLS %p received warning alert %d\n",
-		       tls, alert->description );
+		switch ( alert->description ) {
+		case TLS_ALERT_CLOSE_NOTIFY:
+			DBGC ( tls, "TLS %p closed by notification\n", tls );
+			tls_close ( tls, 0 );
+			break;
+		default:
+			DBGC ( tls, "TLS %p received warning alert %d\n",
+			       tls, alert->description );
+			break;
+		}
 		return 0;
 	case TLS_ALERT_FATAL:
 		DBGC ( tls, "TLS %p received fatal alert %d\n",
@@ -3986,7 +4021,6 @@ int add_tls ( struct interface *xfer, const char *name,
 	tls_clear_cipher ( tls, &tls->rx.cipherspec.active );
 	tls_clear_cipher ( tls, &tls->rx.cipherspec.pending );
 	tls_clear_handshake ( tls );
-	tls->client.random.gmt_unix_time = time ( NULL );
 	iob_populate ( &tls->rx.iobuf, &tls->rx.header, 0,
 		       sizeof ( tls->rx.header ) );
 	INIT_LIST_HEAD ( &tls->rx.data );

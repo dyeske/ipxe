@@ -58,6 +58,8 @@ GENKEYMAP	:= ./util/genkeymap.py
 DOXYGEN		:= doxygen
 LCAB		:= lcab
 QEMUIMG		:= qemu-img
+PANDOC		:= pandoc
+ENVSUBST	:= envsubst
 
 ###############################################################################
 #
@@ -211,32 +213,29 @@ install :
 #
 # Version number calculations
 #
-VERSION_MAJOR	:= 1
-VERSION_MINOR	:= 21
-VERSION_PATCH	:= 1
+VERSION_MAJOR	:= 2
+VERSION_MINOR	:= 0
+VERSION_PATCH	:= 0
 EXTRAVERSION	:= +
 ifneq ($(wildcard ../.git/HEAD),)
-GITHEAD		:= $(shell cat ../.git/HEAD)
-ifneq ($(firstword $(GITHEAD)),ref:)
-GITCOMMIT	:= $(GITHEAD)
-else
-GITREF		:= $(word 2,$(GITHEAD))
+GITVERSION	:= $(shell cat ../.git/HEAD)
+ifeq ($(firstword $(GITVERSION)),ref:)
+GITREF		:= $(word 2,$(GITVERSION))
 ifneq ($(wildcard ../.git/$(GITREF)),)
-GITCOMMIT	:= $(shell cat ../.git/$(GITREF))
+GITVERSION	:= $(shell cat ../.git/$(GITREF))
 else
-GITCOMMIT	:= $(shell awk -v ref="$(GITREF)" '$$2 == ref { print $1 }' \
+GITVERSION	:= $(shell awk -v ref="$(GITREF)" '$$2 == ref { print $1 }' \
 			   ../.git/packed-refs)
 endif
 endif
-ifeq ($(GITCOMMIT),)
+ifeq ($(GITVERSION),)
 $(error Unable to determine git commit ID)
 endif
-GITVERSION	:= g$(shell echo "$(GITCOMMIT)" | cut -c1-5)
 endif
 MM_VERSION	= $(VERSION_MAJOR).$(VERSION_MINOR)
 VERSION		= $(MM_VERSION).$(VERSION_PATCH)$(EXTRAVERSION)
 ifneq ($(GITVERSION),)
-VERSION		+= ($(GITVERSION))
+VERSION		+= (g$(shell echo "$(GITVERSION)" | cut -c1-5))
 endif
 version :
 	@$(ECHO) "$(VERSION)"
@@ -245,14 +244,17 @@ version :
 #
 # Predefined build shortcuts (for e.g. bin/ipxe.iso)
 
-# All drivers (excluding USB)
+# All drivers (defined on a per-platform basis)
 #
-DRIVERS_ipxe	= $(DRIVERS_net) $(DRIVERS_infiniband) \
-		  $(DRIVERS_xen) $(DRIVERS_hyperv)
+DRIVERS_ipxe	+=
+
+# All drivers (excluding USB network devices)
+#
+DRIVERS_ipxe-legacy = $(filter-out $(DRIVERS_usb_net),$(DRIVERS_ipxe))
 
 # Raspberry Pi
 #
-DRIVERS_rpi	= smsc95xx lan78xx
+DRIVERS_rpi	+= smsc95xx lan78xx
 
 ###############################################################################
 #

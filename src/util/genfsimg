@@ -12,6 +12,7 @@ help() {
     echo
     echo "where OPTIONS are:"
     echo " -h         show this help"
+    echo " -e SHIM    specify an EFI shim helper"
     echo " -o FILE    save image to file"
     echo " -p PAD     pad filesystem (in kB)"
     echo " -s SCRIPT  use executable script"
@@ -34,55 +35,61 @@ get_byte() {
 get_word() {
     local FILENAME
     local OFFSET
+    local LSB
+    local MSB
 
     FILENAME="${1}"
     OFFSET="${2}"
 
-    od -j "${OFFSET}" -N 2 -A n -t x1 -- "${FILENAME}" | tr -d " "
+    LSB=$(get_byte "${FILENAME}" $(( ${OFFSET} + 0 )) )
+    MSB=$(get_byte "${FILENAME}" $(( ${OFFSET} + 1 )) )
+    echo "${MSB}${LSB}"
 }
 
-# Get appropriate EFI boot filename for CPU architecture
+# Get appropriate EFI boot filename portion for CPU architecture
 #
-efi_boot_name() {
+efi_boot_arch() {
     local FILENAME
+    local MZSIG
+    local PEOFF
     local PESIG
     local ARCH
 
     FILENAME="${1}"
 
     MZSIG=$(get_word "${FILENAME}" 0)
-    if [ "${MZSIG}" != "4d5a" ] ; then
+    if [ "${MZSIG}" != "5a4d" ] ; then
 	echo "${FILENAME}: invalid MZ header" >&2
 	exit 1
     fi
     PEOFF=$(get_byte "${FILENAME}" 0x3c)
     PESIG=$(get_word "${FILENAME}" 0x${PEOFF})
-    if [ "${PESIG}" != "5045" ] ; then
+    if [ "${PESIG}" != "4550" ] ; then
 	echo "${FILENAME}: invalid PE header" >&2
 	exit 1
     fi
     ARCH=$(get_word "${FILENAME}" $(( 0x${PEOFF} + 4 )) )
     case "${ARCH}" in
-	"4c01" )
-	    echo "BOOTIA32.EFI"
+	"014c" )
+	    echo "IA32"
 	    ;;
-	"6486" )
-	    echo "BOOTX64.EFI"
+	"8664" )
+	    echo "X64"
 	    ;;
-	"c201" )
-	    echo "BOOTARM.EFI"
+	"01c2" )
+	    echo "ARM"
 	    ;;
-	"6462" )
-	    echo "BOOTLOONGARCH64.EFI"
+	"6264" )
+	    echo "LOONGARCH64"
 	    ;;
-	"64aa" )
-	    echo "BOOTAA64.EFI"
+	"aa64" )
+	    echo "AA64"
 	    ;;
-	"6450" )
-	    echo "BOOTRISCV64.EFI"
+	"5064" )
+	    echo "RISCV64"
 	    ;;
-	"3250" )
-	    echo "BOOTRISCV32.EFI"
+	"5032" )
+	    echo "RISCV32"
 	    ;;
 	* )
 	    echo "${FILENAME}: unrecognised EFI architecture ${ARCH}" >&2
@@ -128,11 +135,28 @@ copy_syslinux_file() {
 OUTFILE=
 PAD=0
 SCRIPT=
-while getopts "hlo:p:s:" OPTION ; do
+SHIMAA64=
+SHIMX64=
+while getopts "he:o:p:s:" OPTION ; do
     case "${OPTION}" in
 	h)
 	    help
 	    exit 0
+	    ;;
+	e)
+	    SHIM="${OPTARG}"
+	    SHIMARCH=$(efi_boot_arch "${SHIM}")
+	    case "${SHIMARCH}" in
+		"AA64" )
+		    SHIMAA64="${SHIM}"
+		    ;;
+		"X64" )
+		    SHIMX64="${SHIM}"
+		    ;;
+		* )
+		    echo "${SHIM}: unsupported shim architecture" >&2
+		    exit 1
+	    esac
 	    ;;
 	o)
 	    OUTFILE="${OPTARG}"
@@ -211,11 +235,33 @@ for FILENAME ; do
 	    ;;
 	*.efi)
 	    DESTDIR="${FATDIR}/EFI/BOOT"
-	    DESTFILE=$(efi_boot_name "${FILENAME}")
+	    DESTARCH=$(efi_boot_arch "${FILENAME}")
+	    case "${DESTARCH}" in
+		"AA64" )
+		    DESTSHIM="${SHIMAA64}"
+		    ;;
+		"X64" )
+		    DESTSHIM="${SHIMX64}"
+		    ;;
+		* )
+		    DESTSHIM=
+		    ;;
+	    esac
+	    if [ -n "${DESTSHIM}" ] ; then
+		DESTFILE="IPXE.EFI"
+	    else
+		DESTFILE="BOOT${DESTARCH}.EFI"
+	    fi
 	    if [ -z "${EFI}" ] ; then
 		mkdir -p "${DESTDIR}"
 		if [ -n "${SCRIPT}" ] ; then
 		    cp "${SCRIPT}" "${FATDIR}/autoexec.ipxe"
+		fi
+		if [ -n "${SHIMAA64}" ] ; then
+		    cp "${SHIMAA64}" "${DESTDIR}/BOOTAA64.EFI"
+		fi
+		if [ -n "${SHIMX64}" ] ; then
+		    cp "${SHIMX64}" "${DESTDIR}/BOOTX64.EFI"
 		fi
 	    fi
 	    EFI=1
