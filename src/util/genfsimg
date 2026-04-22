@@ -97,37 +97,68 @@ efi_boot_arch() {
     esac
 }
 
-# Copy syslinux file
+# Check if binary wants a log partition
 #
-copy_syslinux_file() {
+wants_disklog() {
     local FILENAME
-    local DESTDIR
+    local OEMID
+    local OEMINFO
+    local FLAG
+
+    FILENAME="${1}"
+
+    OEMID=$(get_word "${FILENAME}" 0x24)
+    OEMINFO=$(get_word "${FILENAME}" 0x26)
+    FLAG=$(( OEMINFO & 0x0001 ))
+    [ "${OEMID}" = "18ae" -a "${FLAG}" -ne "0" ]
+}
+
+# Find syslinux file
+#
+find_syslinux_file() {
+    local FILENAME
     local SRCDIR
 
     FILENAME="${1}"
-    DESTDIR="${2}"
 
     for SRCDIR in \
 	/usr/lib/syslinux \
 	/usr/lib/syslinux/bios \
+	/usr/lib/syslinux/mbr \
 	/usr/lib/syslinux/modules/bios \
 	/usr/share/syslinux \
 	/usr/share/syslinux/bios \
+	/usr/share/syslinux/mbr \
 	/usr/share/syslinux/modules/bios \
 	/usr/local/share/syslinux \
 	/usr/local/share/syslinux/bios \
 	/usr/local/share/syslinux/bios/core \
 	/usr/local/share/syslinux/bios/com32/elflink/ldlinux \
+	/usr/local/share/syslinux/mbr \
 	/usr/local/share/syslinux/modules/bios \
 	/usr/lib/ISOLINUX \
 	; do
 	if [ -e "${SRCDIR}/${FILENAME}" ] ; then
-	    install -m 644 "${SRCDIR}/${FILENAME}" "${DESTDIR}/"
+	    echo "${SRCDIR}/${FILENAME}"
 	    return 0
 	fi
     done
     echo "${0}: could not find ${FILENAME}" >&2
     return 1
+}
+
+# Copy syslinux file
+#
+copy_syslinux_file() {
+    local FILENAME
+    local DESTDIR
+    local SRCFILE
+
+    FILENAME="${1}"
+    DESTDIR="${2}"
+
+    SRCFILE=$(find_syslinux_file "${FILENAME}")
+    install -m 644 "${SRCFILE}" "${DESTDIR}/"
 }
 
 # Parse command-line options
@@ -190,6 +221,7 @@ fi
 WORKDIR=$(mktemp -d "${OUTFILE}.XXXXXX")
 ISODIR="${WORKDIR}/iso"
 FATDIR="${WORKDIR}/fat"
+MTOOLSRC="${WORKDIR}/mtoolsrc"
 mkdir -p "${ISODIR}" "${FATDIR}"
 
 # Configure output
@@ -200,19 +232,44 @@ case "${OUTFILE}" in
 	FATIMG="${ISODIR}/esp.img"
 	BIOSDIR="${ISODIR}"
 	SYSLINUXCFG="${ISODIR}/isolinux.cfg"
+	FATPART=
+	LOGPART=
+	;;
+    *.sdsk)
+	ISOIMG=
+	FATIMG="${OUTFILE}"
+	BIOSDIR="${FATDIR}"
+	SYSLINUXCFG="${FATDIR}/syslinux.cfg"
+	FATPART=
+	LOGPART=
 	;;
     *)
 	ISOIMG=
 	FATIMG="${OUTFILE}"
 	BIOSDIR="${FATDIR}"
 	SYSLINUXCFG="${FATDIR}/syslinux.cfg"
+	FATPART="4"
+	LOGPART="3"
 	;;
 esac
+
+# Configure mtools
+#
+cat >"${MTOOLSRC}" <<EOF
+drive F:
+  file="${FATIMG}"
+  ${FATPART:+partition=}${FATPART}
+drive L:
+  file="${FATIMG}"
+  ${LOGPART:+partition=}${LOGPART}
+EOF
+export MTOOLSRC
 
 # Copy files to temporary working directory
 #
 LKRN=
 EFI=
+DISKLOG=
 for FILENAME ; do
     case "${FILENAME}" in
 	*.lkrn)
@@ -277,6 +334,9 @@ for FILENAME ; do
 	exit 1
     fi
     cp "${FILENAME}" "${DESTDIR}/${DESTFILE}"
+    if wants_disklog "${FILENAME}" ; then
+	DISKLOG=1
+    fi
 done
 
 # Configure ISO image, if applicable
@@ -310,26 +370,63 @@ fi
 # Create FAT filesystem image, if applicable
 #
 if [ -n "${FATIMG}" ] ; then
-    FATSIZE=$(du -s -k "${FATDIR}" | cut -f1)
-    FATSIZE=$(( FATSIZE + PAD + 256 ))
-    touch "${FATIMG}"
-    if [ "${FATSIZE}" -le "1440" ] ; then
-	FATSIZE=1440
-	FATARGS="-f 1440"
+    FATUSED=$(du -s -k "${FATDIR}" | cut -f1)
+    FATSIZE=$(( ( FATUSED + PAD + 256 ) * 2 ))
+    if [ -n "${FATPART}" -o "${FATSIZE}" -gt "2880" ] ; then
+	FATHEADS=64
+	FATSECTS=32
+	FATALIGN=$(( FATHEADS * FATSECTS ))
+	FATCYLS=$(( ( FATSIZE + FATALIGN - 1 ) / FATALIGN ))
+	FATSIZE=$(( FATCYLS * FATALIGN ))
+	FATCLUST=8
+	if [ "${FATSIZE}" -eq $(( FATCLUST * 4096 )) -o \
+	     "${FATSIZE}" -eq $(( FATCLUST * 65536 )) ] ; then
+	    # Avoid cluster counts close to the FAT12/FAT16 limits to
+	    # work around syslinux bugs
+	    FATCLUST=$(( FATCLUST * 2 ))
+	fi
+	FATARGS="-t ${FATCYLS} -h ${FATHEADS} -s ${FATSECTS} -c ${FATCLUST}"
     else
-	FATCYLS=$(( ( FATSIZE + 503 ) / 504 ))
-	FATSIZE=$(( FATCYLS * 504 ))
-	FATARGS="-s 63 -h 16 -t ${FATCYLS}"
+	FATSIZE=2880
+	FATARGS="-f 1440"
+    fi
+    if [ -n "${FATPART}" ] ; then
+	FATOFFS="${FATSECTS}"
+	FATMBR=$(find_syslinux_file "mbr.bin")
+    else
+	FATOFFS=0
     fi
     if [ -n "${SOURCE_DATE_EPOCH:-}" ] ; then
 	FATSERIAL=$(( SOURCE_DATE_EPOCH % 100000000 ))
 	FATARGS="${FATARGS} -N ${FATSERIAL}"
     fi
-    truncate -s "${FATSIZE}K" "${FATIMG}"
-    mformat -v iPXE -i "${FATIMG}" ${FATARGS} ::
-    mcopy -i "${FATIMG}" -s "${FATDIR}"/* ::
+    if [ -n "${DISKLOG}" -a -n "${LOGPART}" ] ; then
+	LOGTYPE=0xe0
+	LOGCYLS=1
+	LOGSIZE=$(( LOGCYLS * FATALIGN ))
+	FATSIZE=$(( LOGSIZE + FATSIZE ))
+	LOGOFFS="${FATOFFS}"
+	FATOFFS="${LOGSIZE}"
+    fi
+    touch "${FATIMG}"
+    truncate -s 0 "${FATIMG}"
+    truncate -s $(( FATSIZE * 512 )) "${FATIMG}"
+    if [ -n "${FATPART}" ] ; then
+	dd if="${FATMBR}" of="${FATIMG}" conv=notrunc status=none
+	mpartition -c -I -t "${FATCYLS}" -h "${FATHEADS}" -s "${FATSECTS}" \
+		   -b "${FATOFFS}" F:
+	mpartition -a F:
+    fi
+    if [ -n "${DISKLOG}" -a -n "${LOGPART}" ] ; then
+	mpartition -c -t "${LOGCYLS}" -h "${FATHEADS}" -s "${FATSECTS}" \
+		   -b "${LOGOFFS}" -T "${LOGTYPE}" L:
+	printf "iPXE LOG\n\n" |
+	    dd of="${FATIMG}" seek="${LOGOFFS}" conv=notrunc status=none
+    fi
+    mformat -v iPXE ${FATARGS} F:
+    mcopy -s "${FATDIR}"/* F:
     if [ "${BIOSDIR}" = "${FATDIR}" ] ; then
-	syslinux "${FATIMG}"
+	syslinux --offset "$(( FATOFFS * 512 ))" "${FATIMG}"
     fi
 fi
 
