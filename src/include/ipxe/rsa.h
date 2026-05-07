@@ -57,5 +57,8 @@ struct rsa_digestinfo_prefix {
 #define __rsa_digestinfo_prefix __table_entry ( RSA_DIGESTINFO_PREFIXES, 01 )
 
 extern struct pubkey_algorithm rsa_algorithm;
+extern struct pubkey_algorithm rsa_pss_algorithm;
+
+extern int ( * rsa_get_random ) ( void *data, size_t len );
 
 #endif /* _IPXE_RSA_H */

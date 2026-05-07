@@ -338,10 +338,11 @@ static void virtnet_close ( struct net_device *netdev ) {
 	virtnet_free_virtqueues ( netdev );
 
 	/* Free rx iobufs */
-	list_for_each_entry_safe ( iobuf, next_iobuf, &virtnet->rx_iobufs, list ) {
+	list_for_each_entry_safe ( iobuf, next_iobuf, &virtnet->rx_iobufs,
+				   list ) {
+		list_del ( &iobuf->list );
 		free_rx_iob ( iobuf );
 	}
-	INIT_LIST_HEAD ( &virtnet->rx_iobufs );
 	virtnet->rx_num_iobufs = 0;
 }
 
@@ -623,6 +624,7 @@ static int virtnet_probe_modern ( struct pci_device *pci, int *found_dev ) {
 			DBGC ( virtnet, "VIRTIO-NET %p mtu=%d\n", virtnet,
 			       mtu );
 			netdev->max_pkt_len = ( mtu + ETH_HLEN );
+			netdev->mtu = mtu;
 		}
 	}
 
@@ -682,11 +684,12 @@ static void virtnet_remove ( struct pci_device *pci ) {
 	struct net_device *netdev = pci_get_drvdata ( pci );
 	struct virtnet_nic *virtnet = netdev->priv;
 
+	unregister_netdev ( netdev );
+
 	virtio_pci_unmap_capability ( &virtnet->vdev.device );
 	virtio_pci_unmap_capability ( &virtnet->vdev.isr );
 	virtio_pci_unmap_capability ( &virtnet->vdev.common );
 
-	unregister_netdev ( netdev );
 	netdev_nullify ( netdev );
 	netdev_put ( netdev );
 }
