@@ -212,7 +212,7 @@ FILE_SECBOOT ( PERMITTED );
 #define ERRFILE_eoib		     ( ERRFILE_DRIVER | 0x007c0000 )
 #define ERRFILE_golan		     ( ERRFILE_DRIVER | 0x007d0000 )
 #define ERRFILE_flexboot_nodnic	     ( ERRFILE_DRIVER | 0x007e0000 )
-#define ERRFILE_virtio_pci	     ( ERRFILE_DRIVER | 0x007f0000 )
+#define ERRFILE_virtio		     ( ERRFILE_DRIVER | 0x007f0000 )
 #define ERRFILE_pciea		     ( ERRFILE_DRIVER | 0x00c00000 )
 #define ERRFILE_axge		     ( ERRFILE_DRIVER | 0x00c10000 )
 #define ERRFILE_thunderx	     ( ERRFILE_DRIVER | 0x00c20000 )

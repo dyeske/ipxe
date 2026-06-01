@@ -182,6 +182,12 @@ struct asn1_builder_header {
 	ASN1_OID_TRIPLE ( 113549 ), ASN1_OID_SINGLE ( 1 ),	\
 	ASN1_OID_SINGLE ( 1 ), ASN1_OID_SINGLE ( 5 )
 
+/** ASN.1 OID for rsassa-pss (1.2.840.113549.1.1.10) */
+#define ASN1_OID_RSASSA_PSS					\
+	ASN1_OID_INITIAL ( 1, 2 ), ASN1_OID_DOUBLE ( 840 ),	\
+	ASN1_OID_TRIPLE ( 113549 ), ASN1_OID_SINGLE ( 1 ),	\
+	ASN1_OID_SINGLE ( 1 ), ASN1_OID_SINGLE ( 10 )
+
 /** ASN.1 OID for sha256WithRSAEncryption (1.2.840.113549.1.1.11) */
 #define ASN1_OID_SHA256WITHRSAENCRYPTION			\
 	ASN1_OID_INITIAL ( 1, 2 ), ASN1_OID_DOUBLE ( 840 ),	\
@@ -437,6 +443,7 @@ struct asn1_algorithm {
 
 /* ASN.1 OID-identified algorithms */
 extern struct asn1_algorithm rsa_encryption_algorithm __asn1_algorithm;
+extern struct asn1_algorithm rsassa_pss_algorithm __asn1_algorithm;
 extern struct asn1_algorithm md5_with_rsa_encryption_algorithm __asn1_algorithm;
 extern struct asn1_algorithm
 sha1_with_rsa_encryption_algorithm __asn1_algorithm;

@@ -56,6 +56,7 @@ struct rsa_digestinfo_prefix rsa_sha224_prefix __rsa_digestinfo_prefix = {
 /** RSA with SHA-224 signature hash algorithm */
 struct tls_signature_hash_algorithm tls_rsa_sha224 __tls_sig_hash_algorithm = {
 	.code = htons ( TLS_RSA_SHA224_ALGORITHM ),
+	.algorithm = &rsa_encryption_algorithm,
 	.pubkey = &rsa_algorithm,
 	.digest = &sha224_algorithm,
 };

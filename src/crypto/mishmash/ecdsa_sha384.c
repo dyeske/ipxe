@@ -45,6 +45,7 @@ struct asn1_algorithm ecdsa_with_sha384_algorithm __asn1_algorithm = {
 struct tls_signature_hash_algorithm
 tls_ecdsa_sha384 __tls_sig_hash_algorithm = {
 	.code = htons ( TLS_ECDSA_SHA384_ALGORITHM ),
+	.algorithm = &ecpubkey_algorithm,
 	.pubkey = &ecdsa_algorithm,
 	.digest = &sha384_algorithm,
 };

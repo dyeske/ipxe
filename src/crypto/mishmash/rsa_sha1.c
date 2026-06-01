@@ -56,6 +56,7 @@ struct rsa_digestinfo_prefix rsa_sha1_prefix __rsa_digestinfo_prefix = {
 /** RSA with SHA-1 signature hash algorithm */
 struct tls_signature_hash_algorithm tls_rsa_sha1 __tls_sig_hash_algorithm = {
 	.code = htons ( TLS_RSA_SHA1_ALGORITHM ),
+	.algorithm = &rsa_encryption_algorithm,
 	.pubkey = &rsa_algorithm,
 	.digest = &sha1_algorithm,
 };

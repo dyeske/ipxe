@@ -56,6 +56,25 @@ struct rsa_digestinfo_prefix rsa_sha256_prefix __rsa_digestinfo_prefix = {
 /** RSA with SHA-256 signature hash algorithm */
 struct tls_signature_hash_algorithm tls_rsa_sha256 __tls_sig_hash_algorithm = {
 	.code = htons ( TLS_RSA_SHA256_ALGORITHM ),
+	.algorithm = &rsa_encryption_algorithm,
 	.pubkey = &rsa_algorithm,
+	.digest = &sha256_algorithm,
+};
+
+/** RSA-PSS with rsaEncryption OID and SHA-256 signature hash algorithm */
+struct tls_signature_hash_algorithm
+tls_rsa_pss_rsae_sha256 __tls_sig_hash_algorithm = {
+	.code = htons ( TLS_RSA_PSS_RSAE_SHA256_ALGORITHM ),
+	.algorithm = &rsa_encryption_algorithm,
+	.pubkey = &rsa_pss_algorithm,
+	.digest = &sha256_algorithm,
+};
+
+/** RSA-PSS with RSASSA-PSS OID and SHA-256 signature hash algorithm */
+struct tls_signature_hash_algorithm
+tls_rsa_pss_pss_sha256 __tls_sig_hash_algorithm = {
+	.code = htons ( TLS_RSA_PSS_PSS_SHA256_ALGORITHM ),
+	.algorithm = &rsassa_pss_algorithm,
+	.pubkey = &rsa_pss_algorithm,
 	.digest = &sha256_algorithm,
 };

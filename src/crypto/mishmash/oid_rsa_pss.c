@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 Michael Brown <mbrown@fensystems.co.uk>.
+ * Copyright (C) 2026 Michael Brown <mbrown@fensystems.co.uk>.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -24,28 +24,16 @@
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 FILE_SECBOOT ( PERMITTED );
 
-#include <byteswap.h>
-#include <ipxe/ecdsa.h>
-#include <ipxe/sha256.h>
+#include <ipxe/rsa.h>
 #include <ipxe/asn1.h>
-#include <ipxe/tls.h>
 
-/** "ecdsa-with-SHA256" object identifier */
-static uint8_t oid_ecdsa_with_sha256[] = { ASN1_OID_ECDSA_WITH_SHA256 };
+/** "rsassa-pss" object identifier */
+static uint8_t oid_rsassa_pss[] = { ASN1_OID_RSASSA_PSS };
 
-/** "ecdsa-with-SHA256" OID-identified algorithm */
-struct asn1_algorithm ecdsa_with_sha256_algorithm __asn1_algorithm = {
-	.name = "ecdsaWithSHA256",
-	.pubkey = &ecdsa_algorithm,
-	.digest = &sha256_algorithm,
-	.oid = ASN1_CURSOR ( oid_ecdsa_with_sha256 ),
-};
-
-/** ECDSA with SHA-256 signature hash algorithm */
-struct tls_signature_hash_algorithm
-tls_ecdsa_sha256 __tls_sig_hash_algorithm = {
-	.code = htons ( TLS_ECDSA_SHA256_ALGORITHM ),
-	.algorithm = &ecpubkey_algorithm,
-	.pubkey = &ecdsa_algorithm,
-	.digest = &sha256_algorithm,
+/** "rsassa-pss" OID-identified algorithm */
+struct asn1_algorithm rsassa_pss_algorithm __asn1_algorithm = {
+	.name = "rsassa-pss",
+	.pubkey = &rsa_pss_algorithm,
+	.digest = NULL,
+	.oid = ASN1_CURSOR ( oid_rsassa_pss ),
 };

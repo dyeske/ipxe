@@ -37,6 +37,7 @@ FILE_SECBOOT ( PERMITTED );
 #include <ipxe/md5.h>
 #include <ipxe/sha1.h>
 #include <ipxe/sha256.h>
+#include <ipxe/md5_sha1.h>
 #include <ipxe/aes.h>
 #include <ipxe/rsa.h>
 #include <ipxe/iobuf.h>
@@ -279,71 +280,6 @@ tls_version ( struct tls_connection *tls, unsigned int version ) {
 	return ( ( TLS_VERSION_MIN >= version ) ||
 		 ( tls->version >= version ) );
 }
-
-/******************************************************************************
- *
- * Hybrid MD5+SHA1 hash as used by TLSv1.1 and earlier
- *
- ******************************************************************************
- */
-
-/**
- * Initialise MD5+SHA1 algorithm
- *
- * @v ctx		MD5+SHA1 context
- */
-static void md5_sha1_init ( void *ctx ) {
-	struct md5_sha1_context *context = ctx;
-
-	digest_init ( &md5_algorithm, context->md5 );
-	digest_init ( &sha1_algorithm, context->sha1 );
-}
-
-/**
- * Accumulate data with MD5+SHA1 algorithm
- *
- * @v ctx		MD5+SHA1 context
- * @v data		Data
- * @v len		Length of data
- */
-static void md5_sha1_update ( void *ctx, const void *data, size_t len ) {
-	struct md5_sha1_context *context = ctx;
-
-	digest_update ( &md5_algorithm, context->md5, data, len );
-	digest_update ( &sha1_algorithm, context->sha1, data, len );
-}
-
-/**
- * Generate MD5+SHA1 digest
- *
- * @v ctx		MD5+SHA1 context
- * @v out		Output buffer
- */
-static void md5_sha1_final ( void *ctx, void *out ) {
-	struct md5_sha1_context *context = ctx;
-	struct md5_sha1_digest *digest = out;
-
-	digest_final ( &md5_algorithm, context->md5, digest->md5 );
-	digest_final ( &sha1_algorithm, context->sha1, digest->sha1 );
-}
-
-/** Hybrid MD5+SHA1 digest algorithm */
-static struct digest_algorithm md5_sha1_algorithm = {
-	.name		= "md5+sha1",
-	.ctxsize	= sizeof ( struct md5_sha1_context ),
-	.blocksize	= 0, /* Not applicable */
-	.digestsize	= sizeof ( struct md5_sha1_digest ),
-	.init		= md5_sha1_init,
-	.update		= md5_sha1_update,
-	.final		= md5_sha1_final,
-};
-
-/** RSA digestInfo prefix for MD5+SHA1 algorithm */
-struct rsa_digestinfo_prefix rsa_md5_sha1_prefix __rsa_digestinfo_prefix = {
-	.digest = &md5_sha1_algorithm,
-	.data = NULL, /* MD5+SHA1 signatures have no digestInfo */
-	.len = 0,
-};
 
 /******************************************************************************
  *
@@ -1527,10 +1463,9 @@ static int tls_verify_dh_params ( struct tls_connection *tls,
 		digest = sig_hash->digest;
 		DBGC ( tls, "TLS %p using signature hash %s-%s\n",
 		       tls, pubkey->name, digest->name );
-		if ( pubkey != cipherspec->suite->pubkey ) {
-			DBGC ( tls, "TLS %p ServerKeyExchange incorrect "
-			       "signature algorithm %s (expected %s)\n", tls,
-			       pubkey->name, cipherspec->suite->pubkey->name );
+		if ( sig_hash->algorithm != tls->server.algorithm ) {
+			DBGC ( tls, "TLS %p cannot use %s public key\n",
+			       tls, tls->server.algorithm->name );
 			return -EPERM_KEY_EXCHANGE;
 		}
 	} else {
@@ -2395,6 +2330,7 @@ static int tls_parse_chain ( struct tls_connection *tls,
 	memset ( &tls->server.key, 0, sizeof ( tls->server.key ) );
 	x509_chain_put ( tls->server.chain );
 	tls->server.chain = NULL;
+	tls->server.algorithm = NULL;
 
 	/* Create certificate chain */
 	tls->server.chain = x509_alloc_chain();
@@ -2455,6 +2391,7 @@ static int tls_parse_chain ( struct tls_connection *tls,
 	memset ( &tls->server.key, 0, sizeof ( tls->server.key ) );
 	x509_chain_put ( tls->server.chain );
 	tls->server.chain = NULL;
+	tls->server.algorithm = NULL;
  err_alloc_chain:
 	return rc;
 }
@@ -3749,6 +3686,7 @@ static void tls_validator_done ( struct tls_connection *tls, int rc ) {
 	}
 
 	/* Extract the now trusted server public key */
+	tls->server.algorithm = cert->subject.public_key.algorithm;
 	memcpy ( &tls->server.key, &cert->subject.public_key.raw,
 		 sizeof ( tls->server.key ) );
 
