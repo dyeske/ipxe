@@ -831,54 +831,51 @@ void x25519_key ( const struct x25519_value *base,
 }
 
 /**
- * Check if this is the point at infinity
+ * Share public key
  *
- * @v point		Curve point
- * @ret is_infinity	This is the point at infinity
- */
-static int x25519_curve_is_infinity ( const void *point ) {
-
-	/* We use all zeroes for the point at infinity (as per RFC8422) */
-	return x25519_is_zero ( point );
-}
-
-/**
- * Multiply scalar by curve point
- *
- * @v base		Base point
- * @v scalar		Scalar multiple
- * @v result		Result point to fill in
+ * @v exchange		Key exchange algorithm
+ * @v private		Private key
+ * @v public		Public key to fill in
  * @ret rc		Return status code
  */
-static int x25519_curve_multiply ( const void *base, const void *scalar,
-				   void *result ) {
+static int x25519_share ( struct exchange_algorithm *exchange __unused,
+			  const void *private, void *public ) {
 
-	x25519_key ( base, scalar, result );
+	/* Calculate public key */
+	x25519_key ( &x25519_generator, private, public );
+
 	return 0;
 }
 
 /**
- * Add curve points (as a one-off operation)
+ * Agree shared secret
  *
- * @v addend		Curve point to add
- * @v augend		Curve point to add
- * @v result		Curve point to hold result
+ * @v exchange		Key exchange algorithm
+ * @v private		Private key
+ * @v partner		Partner public key
+ * @v shared		Shared secret to fill in
  * @ret rc		Return status code
  */
-static int x25519_curve_add ( const void *addend __unused,
-			      const void *augend __unused,
-			      void *result __unused ) {
+static int x25519_agree ( struct exchange_algorithm *exchange __unused,
+			  const void *private, const void *partner,
+			  void *shared ) {
 
-	return -ENOTTY;
+	/* Calculate shared secret */
+	x25519_key ( partner, private, shared );
+
+	/* Check for point at infinity (all zeros as per RFC8422) */
+	if ( x25519_is_zero ( shared ) )
+		return -EPERM;
+
+	return 0;
 }
 
-/** X25519 elliptic curve */
-struct elliptic_curve x25519_curve = {
+/** X25519 key exchange algorithm */
+struct exchange_algorithm x25519_algorithm = {
 	.name = "x25519",
-	.pointsize = sizeof ( struct x25519_value ),
-	.keysize = sizeof ( struct x25519_value ),
-	.base = x25519_generator.raw,
-	.is_infinity = x25519_curve_is_infinity,
-	.multiply = x25519_curve_multiply,
-	.add = x25519_curve_add,
+	.privsize = sizeof ( struct x25519_value ),
+	.pubsize = sizeof ( struct x25519_value ),
+	.sharedsize = sizeof ( struct x25519_value ),
+	.share = x25519_share,
+	.agree = x25519_agree,
 };

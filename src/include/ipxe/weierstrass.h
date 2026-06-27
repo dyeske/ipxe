@@ -12,6 +12,7 @@ FILE_SECBOOT ( PERMITTED );
 
 #include <ipxe/bigint.h>
 #include <ipxe/crypto.h>
+#include <ipxe/elliptic.h>
 
 /** Number of axes in Weierstrass curve point representation */
 #define WEIERSTRASS_AXES 2
@@ -53,7 +54,7 @@ FILE_SECBOOT ( PERMITTED );
  * Define a Weierstrass projective co-ordinate type
  *
  * @v size		Number of elements in scalar values
- * @ret weierstrass_t	Projective co-ordinate type
+ * @ret type		Projective co-ordinate type
  */
 #define weierstrass_t( size )						\
 	union {								\
@@ -92,8 +93,6 @@ enum weierstrass_multiple {
 struct weierstrass_curve {
 	/** Number of elements in scalar values */
 	const unsigned int size;
-	/** Curve name */
-	const char *name;
 	/** Length of raw scalar values */
 	size_t len;
 	/** Field prime */
@@ -125,14 +124,19 @@ struct weierstrass_curve {
 	};
 };
 
-extern int weierstrass_is_infinity ( struct weierstrass_curve *curve,
+extern int weierstrass_is_infinity ( struct elliptic_curve *curve,
 				     const void *point );
-extern int weierstrass_multiply ( struct weierstrass_curve *curve,
+extern int weierstrass_multiply ( struct elliptic_curve *curve,
 				  const void *base, const void *scalar,
 				  void *result );
-extern int weierstrass_add_once ( struct weierstrass_curve *curve,
+extern int weierstrass_add_once ( struct elliptic_curve *curve,
 				  const void *addend, const void *augend,
 				  void *result );
+extern void weierstrass_share ( struct exchange_algorithm *exchange,
+				const void *private, void *public );
+extern int weierstrass_agree ( struct exchange_algorithm *exchange,
+			       const void *private, const void *partner,
+			       void *shared );
 
 /** Define a Weierstrass curve */
 #define WEIERSTRASS_CURVE( _name, _curve, _len, _prime, _a, _b, _base,	\
@@ -141,7 +145,6 @@ extern int weierstrass_add_once ( struct weierstrass_curve *curve,
 		_name ## _cache[WEIERSTRASS_NUM_CACHED];		\
 	static struct weierstrass_curve _name ## _weierstrass = {	\
 		.size = weierstrass_size(_len),				\
-		.name = #_name,						\
 		.len = (_len),						\
 		.prime_raw = (_prime),					\
 		.a_raw = (_a),						\
@@ -158,30 +161,16 @@ extern int weierstrass_add_once ( struct weierstrass_curve *curve,
 		.a = (_name ## _cache)[6].element,			\
 		.b3 = (_name ## _cache)[7].element,			\
 	};								\
-	static int _name ## _is_infinity ( const void *point) {		\
-		return weierstrass_is_infinity ( &_name ## _weierstrass,\
-						 point );		\
-	}								\
-	static int _name ## _multiply ( const void *base,		\
-					const void *scalar,		\
-					void *result ) {		\
-		return weierstrass_multiply ( &_name ## _weierstrass,	\
-					      base, scalar, result );	\
-	}								\
-	static int _name ## _add ( const void *addend,			\
-				   const void *augend, void *result) {	\
-		return weierstrass_add_once ( &_name ## _weierstrass,	\
-					      addend, augend, result );	\
-	}								\
 	struct elliptic_curve _curve = {				\
 		.name = #_name,						\
-		.pointsize = ( WEIERSTRASS_AXES * (_len) ),		\
+		.pointsize = ( (_len) * WEIERSTRASS_AXES ),		\
 		.keysize = (_len),					\
 		.base = (_base),					\
 		.order = (_order),					\
-		.is_infinity = _name ## _is_infinity,			\
-		.multiply = _name ## _multiply,				\
-		.add = _name ## _add,					\
+		.is_infinity = weierstrass_is_infinity,			\
+		.multiply = weierstrass_multiply,			\
+		.add = weierstrass_add_once,				\
+		.priv = &_name ## _weierstrass,				\
 	}
 
 #endif /* _IPXE_WEIERSTRASS_H */

@@ -34,16 +34,19 @@ FILE_SECBOOT ( PERMITTED );
 #include <errno.h>
 #include <ipxe/crypto.h>
 
-void digest_null_init ( void *ctx __unused ) {
+void digest_null_init ( struct digest_algorithm *digest __unused,
+			void *ctx __unused ) {
 	/* Do nothing */
 }
 
-void digest_null_update ( void *ctx __unused, const void *src __unused,
+void digest_null_update ( struct digest_algorithm *digest __unused,
+			  void *ctx __unused, const void *src __unused,
 			  size_t len __unused ) {
 	/* Do nothing */
 }
 
-void digest_null_final ( void *ctx __unused, void *out __unused ) {
+void digest_null_final ( struct digest_algorithm *digest __unused,
+			 void *ctx __unused, void *out __unused ) {
 	/* Do nothing */
 }
 
@@ -57,28 +60,34 @@ struct digest_algorithm digest_null = {
 	.final = digest_null_final,
 };
 
-int cipher_null_setkey ( void *ctx __unused, const void *key __unused,
+int cipher_null_setkey ( struct cipher_algorithm *cipher __unused,
+			 void *ctx __unused, const void *key __unused,
 			 size_t keylen __unused ) {
 	/* Do nothing */
 	return 0;
 }
 
-void cipher_null_setiv ( void *ctx __unused, const void *iv __unused,
-			 size_t ivlen __unused ) {
+int cipher_null_setiv ( struct cipher_algorithm *cipher __unused,
+			void *ctx __unused, const void *iv __unused,
+			size_t ivlen __unused ) {
 	/* Do nothing */
+	return 0;
 }
 
-void cipher_null_encrypt ( void *ctx __unused, const void *src, void *dst,
+void cipher_null_encrypt ( struct cipher_algorithm *cipher __unused,
+			   void *ctx __unused, const void *src, void *dst,
 			   size_t len ) {
 	memcpy ( dst, src, len );
 }
 
-void cipher_null_decrypt ( void *ctx __unused, const void *src, void *dst,
+void cipher_null_decrypt ( struct cipher_algorithm *cipher __unused,
+			   void *ctx __unused, const void *src, void *dst,
 			   size_t len ) {
 	memcpy ( dst, src, len );
 }
 
-void cipher_null_auth ( void *ctx __unused, void *auth __unused ) {
+void cipher_null_auth ( struct cipher_algorithm *cipher __unused,
+			void *ctx __unused, void *auth __unused ) {
 	/* Do nothing */
 }
 
@@ -95,29 +104,39 @@ struct cipher_algorithm cipher_null = {
 	.auth = cipher_null_auth,
 };
 
-int pubkey_null_encrypt ( const struct asn1_cursor *key __unused,
+int pubkey_null_encrypt ( struct pubkey_algorithm *pubkey __unused,
+			  const struct asn1_cursor *key __unused,
 			  const struct asn1_cursor *plaintext __unused,
 			  struct asn1_builder *ciphertext __unused ) {
 	return -ENOTTY;
 }
 
-int pubkey_null_decrypt ( const struct asn1_cursor *key __unused,
+int pubkey_null_decrypt ( struct pubkey_algorithm *pubkey __unused,
+			  const struct asn1_cursor *key __unused,
 			  const struct asn1_cursor *ciphertext __unused,
 			  struct asn1_builder *plaintext __unused ) {
 	return -ENOTTY;
 }
 
-int pubkey_null_sign ( const struct asn1_cursor *key __unused,
+int pubkey_null_sign ( struct pubkey_algorithm *pubkey __unused,
+		       const struct asn1_cursor *key __unused,
 		       struct digest_algorithm *digest __unused,
 		       const void *value __unused,
 		       struct asn1_builder *signature __unused ) {
 	return -ENOTTY;
 }
 
-int pubkey_null_verify ( const struct asn1_cursor *key __unused,
+int pubkey_null_verify ( struct pubkey_algorithm *pubkey __unused,
+			 const struct asn1_cursor *key __unused,
 			 struct digest_algorithm *digest __unused,
 			 const void *value __unused,
 			 const struct asn1_cursor *signature __unused ) {
+	return -ENOTTY;
+}
+
+int pubkey_null_match ( struct pubkey_algorithm *pubkey __unused,
+			const struct asn1_cursor *private_key __unused,
+			const struct asn1_cursor *public_key __unused ) {
 	return -ENOTTY;
 }
 
@@ -127,4 +146,5 @@ struct pubkey_algorithm pubkey_null = {
 	.decrypt = pubkey_null_decrypt,
 	.sign = pubkey_null_sign,
 	.verify = pubkey_null_verify,
+	.match = pubkey_null_match,
 };

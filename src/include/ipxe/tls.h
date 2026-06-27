@@ -17,6 +17,7 @@ FILE_SECBOOT ( PERMITTED );
 #include <ipxe/crypto.h>
 #include <ipxe/md5.h>
 #include <ipxe/sha1.h>
+#include <ipxe/sha256.h>
 #include <ipxe/x509.h>
 #include <ipxe/privkey.h>
 #include <ipxe/pending.h>
@@ -141,11 +142,14 @@ struct tls_header {
 #define TLS_MAX_FRAGMENT_LENGTH_2048 3
 #define TLS_MAX_FRAGMENT_LENGTH_4096 4
 
-/* TLS named curve extension */
-#define TLS_NAMED_CURVE 10
-#define TLS_NAMED_CURVE_SECP256R1 23
-#define TLS_NAMED_CURVE_SECP384R1 24
-#define TLS_NAMED_CURVE_X25519 29
+/* TLS named key exchange group extension */
+#define TLS_NAMED_GROUP 10
+#define TLS_NAMED_GROUP_SECP256R1 23
+#define TLS_NAMED_GROUP_SECP384R1 24
+#define TLS_NAMED_GROUP_X25519 29
+#define TLS_NAMED_GROUP_FFDHE2048 256
+#define TLS_NAMED_GROUP_FFDHE3072 257
+#define TLS_NAMED_GROUP_FFDHE4096 258
 
 /* TLS signature algorithms extension */
 #define TLS_SIGNATURE_ALGORITHMS 13
@@ -236,31 +240,33 @@ struct tls_cipher_suite {
 #define __tls_cipher_suite( pref )					\
 	__table_entry ( TLS_CIPHER_SUITES, pref )
 
-/** TLS named curved type */
+/** TLS named curve type */
 #define TLS_NAMED_CURVE_TYPE 3
 
-/** TLS uncompressed curve point format */
-#define TLS_POINT_FORMAT_UNCOMPRESSED 4
-
-/** A TLS named curve */
-struct tls_named_curve {
-	/** Elliptic curve */
-	struct elliptic_curve *curve;
+/** A TLS named group */
+struct tls_named_group {
+	/** Key exchange algorithm */
+	struct exchange_algorithm *exchange;
 	/** Numeric code (in network-endian order) */
 	uint16_t code;
-	/** Curve point format byte (if any) */
-	uint8_t format;
-	/** Pre-master secret length */
-	uint8_t pre_master_secret_len;
 };
 
-/** TLS named curve table */
-#define TLS_NAMED_CURVES						\
-	__table ( struct tls_named_curve, "tls_named_curves" )
+/** TLS named group table */
+#define TLS_NAMED_GROUPS						\
+	__table ( struct tls_named_group, "tls_named_groups" )
 
-/** Declare a TLS named curve */
-#define __tls_named_curve( pref )					\
-	__table_entry ( TLS_NAMED_CURVES, pref )
+/** Declare a TLS named group */
+#define __tls_named_group( pref )					\
+	__table_entry ( TLS_NAMED_GROUPS, pref )
+
+/** Declare a TLS anonymous named group */
+#define __tls_anon_named_group __tls_named_group ( 98 )
+
+/** Number of non-anonymous TLS named groups */
+#define TLS_NUM_NAMED_GROUPS						\
+	( ( unsigned int )						\
+	  ( __table_entries ( TLS_NAMED_GROUPS, 97 )			\
+	    - table_start ( TLS_NAMED_GROUPS ) ) )
 
 /** A TLS cipher specification */
 struct tls_cipherspec {
@@ -344,6 +350,15 @@ struct tls_session {
 
 	/** List of connections */
 	struct list_head conn;
+};
+
+/** HKDF algorithm for ephemeral secrets */
+#define tls_ephemeral_algorithm sha256_algorithm
+
+/** TLS key schedule */
+struct tls_key_schedule {
+	/** Ephemeral secret pseudorandom key */
+	uint8_t ephemeral[SHA256_DIGEST_SIZE];
 };
 
 /** TLS transmit state */
@@ -450,6 +465,8 @@ struct tls_connection {
 	/** Verification data */
 	struct tls_verify_data verify;
 
+	/** Key schedule */
+	struct tls_key_schedule key;
 	/** Transmit state */
 	struct tls_tx tx;
 	/** Receive state */
