@@ -41,7 +41,7 @@ FILE_SECBOOT ( PERMITTED );
 #define ERRFILE_asprintf	       ( ERRFILE_CORE | 0x00000000 )
 #define ERRFILE_downloader	       ( ERRFILE_CORE | 0x00010000 )
 #define ERRFILE_exec		       ( ERRFILE_CORE | 0x00020000 )
-#define ERRFILE_hw		       ( ERRFILE_CORE | 0x00030000 )
+#define ERRFILE_blob		       ( ERRFILE_CORE | 0x00030000 )
 #define ERRFILE_iobuf		       ( ERRFILE_CORE | 0x00040000 )
 #define ERRFILE_job		       ( ERRFILE_CORE | 0x00050000 )
 #define ERRFILE_linebuf		       ( ERRFILE_CORE | 0x00060000 )
@@ -92,6 +92,8 @@ FILE_SECBOOT ( PERMITTED );
 #define ERRFILE_spcr		       ( ERRFILE_CORE | 0x00330000 )
 #define ERRFILE_disklog		       ( ERRFILE_CORE | 0x00340000 )
 #define ERRFILE_efi_disklog	       ( ERRFILE_CORE | 0x00350000 )
+#define ERRFILE_datauri		       ( ERRFILE_CORE | 0x00360000 )
+#define ERRFILE_dmesg		       ( ERRFILE_CORE | 0x00370000 )
 
 #define ERRFILE_eisa		     ( ERRFILE_DRIVER | 0x00000000 )
 #define ERRFILE_isa		     ( ERRFILE_DRIVER | 0x00010000 )
@@ -342,6 +344,7 @@ FILE_SECBOOT ( PERMITTED );
 #define ERRFILE_efi_siglist	      ( ERRFILE_IMAGE | 0x000d0000 )
 #define ERRFILE_lkrn		      ( ERRFILE_IMAGE | 0x000e0000 )
 #define ERRFILE_initrd		      ( ERRFILE_IMAGE | 0x000f0000 )
+#define ERRFILE_mime		      ( ERRFILE_IMAGE | 0x00100000 )
 
 #define ERRFILE_asn1		      ( ERRFILE_OTHER | 0x00000000 )
 #define ERRFILE_chap		      ( ERRFILE_OTHER | 0x00010000 )
@@ -452,6 +455,8 @@ FILE_SECBOOT ( PERMITTED );
 #define ERRFILE_crypto_null	      ( ERRFILE_OTHER | 0x006a0000 )
 #define ERRFILE_ffdhe		      ( ERRFILE_OTHER | 0x006b0000 )
 #define ERRFILE_cbc		      ( ERRFILE_OTHER | 0x006c0000 )
+#define ERRFILE_channel		      ( ERRFILE_OTHER | 0x006d0000 )
+#define ERRFILE_tlskey		      ( ERRFILE_OTHER | 0x006e0000 )
 
 /** @} */
 

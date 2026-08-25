@@ -15,14 +15,13 @@ FILE_SECBOOT ( PERMITTED );
 #include <ipxe/interface.h>
 #include <ipxe/process.h>
 #include <ipxe/crypto.h>
-#include <ipxe/md5.h>
-#include <ipxe/sha1.h>
-#include <ipxe/sha256.h>
 #include <ipxe/x509.h>
 #include <ipxe/privkey.h>
 #include <ipxe/pending.h>
 #include <ipxe/iobuf.h>
 #include <ipxe/tables.h>
+#include <ipxe/channel.h>
+#include <ipxe/tlskey.h>
 
 struct tls_connection;
 
@@ -48,8 +47,8 @@ struct tls_header {
 /** TLS version 1.2 */
 #define TLS_VERSION_TLS_1_2 0x0303
 
-/** Maximum supported TLS version */
-#define TLS_VERSION_MAX TLS_VERSION_TLS_1_2
+/** TLS version 1.3 */
+#define TLS_VERSION_TLS_1_3 0x0304
 
 /** Change cipher content type */
 #define TLS_TYPE_CHANGE_CIPHER 20
@@ -195,17 +194,38 @@ enum tls_tx_pending {
 	TLS_TX_FINISHED = 0x0020,
 };
 
+/** TLS key exchange parameters */
+struct tls_key_exchange_parameters {
+	/** Length of parameters (excluding trailing signature) */
+	size_t len;
+	/** Key exchange algorithm */
+	struct exchange_algorithm *exchange;
+	/** Partner key */
+	const void *partner;
+	/** Length of partner key */
+	size_t partner_len;
+};
+
 /** A TLS key exchange algorithm */
 struct tls_key_exchange_algorithm {
 	/** Algorithm name */
 	const char *name;
+	/** Fixed key exchange algorithm (if set) */
+	struct exchange_algorithm *exchange;
 	/**
-	 * Transmit Client Key Exchange record
+	 * Parse key exchange parameters from Server Key Exchange record
 	 *
 	 * @v tls		TLS connection
+	 * @v data		Server Key Exchange handshake record
+	 * @v len		Length of Server Key Exchange handshake record
+	 * @v params		Key exchange parameters to fill in
 	 * @ret rc		Return status code
 	 */
-	int ( * exchange ) ( struct tls_connection *tls );
+	int ( * parse ) ( struct tls_connection *tls,
+			  const void *data, size_t len,
+			  struct tls_key_exchange_parameters *params );
+	/** Length of length field in Client Key Exchange record */
+	uint8_t len_len;
 };
 
 /** A TLS cipher suite */
@@ -274,8 +294,8 @@ struct tls_cipherspec {
 	struct tls_cipher_suite *suite;
 	/** Dynamically-allocated storage */
 	void *dynamic;
-	/** Bulk encryption cipher context */
-	void *cipher_ctx;
+	/** Cipher key */
+	void *cipher_key;
 	/** MAC secret */
 	void *mac_secret;
 	/** Fixed initialisation vector */
@@ -284,6 +304,8 @@ struct tls_cipherspec {
 
 /** A TLS cipher specification pair */
 struct tls_cipherspec_pair {
+	/** Writer endpoint */
+	const struct tls_endpoint *writer;
 	/** Current cipher specification */
 	struct tls_cipherspec active;
 	/** Next cipher specification */
@@ -315,11 +337,21 @@ struct tls_signature_hash_algorithm {
 #define __tls_sig_hash_algorithm					\
 	__table_entry ( TLS_SIG_HASH_ALGORITHMS, 01 )
 
-/** TLS client random data */
-struct tls_client_random {
-	/** Random data */
-	uint8_t random[32];
-} __attribute__ (( packed ));
+/** A TLS session ID */
+struct tls_session_id {
+	/** ID */
+	uint8_t data[32];
+	/** Length of ID */
+	uint8_t len;
+};
+
+/** A TLS session ticket */
+struct tls_session_ticket {
+	/** Ticket data */
+	void *data;
+	/** Length of ticket data */
+	size_t len;
+};
 
 /** A TLS session */
 struct tls_session {
@@ -335,30 +367,17 @@ struct tls_session {
 	/** Private key */
 	struct private_key *key;
 
+	/** Bound peer identity */
+	struct secure_preshared_identity psid;
+	/** Pre-shared key */
+	struct tls_preshared_key psk;
 	/** Session ID */
-	uint8_t id[32];
-	/** Length of session ID */
-	size_t id_len;
+	struct tls_session_id id;
 	/** Session ticket */
-	void *ticket;
-	/** Length of session ticket */
-	size_t ticket_len;
-	/** Master secret */
-	uint8_t master_secret[48];
-	/** Extended master secret flag */
-	int extended_master_secret;
+	struct tls_session_ticket ticket;
 
 	/** List of connections */
 	struct list_head conn;
-};
-
-/** HKDF algorithm for ephemeral secrets */
-#define tls_ephemeral_algorithm sha256_algorithm
-
-/** TLS key schedule */
-struct tls_key_schedule {
-	/** Ephemeral secret pseudorandom key */
-	uint8_t ephemeral[SHA256_DIGEST_SIZE];
 };
 
 /** TLS transmit state */
@@ -393,8 +412,6 @@ struct tls_rx {
 
 /** TLS client state */
 struct tls_client {
-	/** Random bytes */
-	struct tls_client_random random;
 	/** Private key (if used) */
 	struct private_key *key;
 	/** Certificate chain (if used) */
@@ -405,20 +422,10 @@ struct tls_client {
 
 /** TLS server state */
 struct tls_server {
-	/** Random bytes */
-	uint8_t random[32];
-	/** Server Key Exchange record (if any) */
-	void *exchange;
-	/** Server Key Exchange record length */
-	size_t exchange_len;
 	/** Root of trust */
 	struct x509_root *root;
 	/** Certificate chain */
 	struct x509_chain *chain;
-	/** Public key algorithm (within server certificate) */
-	struct asn1_algorithm *algorithm;
-	/** Public key (within server certificate) */
-	struct asn1_cursor key;
 	/** Certificate validator */
 	struct interface validator;
 	/** Certificate validation pending operation */
@@ -436,14 +443,10 @@ struct tls_connection {
 	struct tls_session *session;
 	/** List of connections within the same session */
 	struct list_head list;
-	/** Session ID */
-	uint8_t session_id[32];
-	/** Length of session ID */
-	size_t session_id_len;
-	/** New session ticket */
-	void *new_session_ticket;
-	/** Length of new session ticket */
-	size_t new_session_ticket_len;
+	/** New session ID (if any) */
+	struct tls_session_id new_id;
+	/** New session ticket (if any) */
+	struct tls_session_ticket new_ticket;
 
 	/** Plaintext stream */
 	struct interface plainstream;
@@ -452,12 +455,8 @@ struct tls_connection {
 
 	/** Protocol version */
 	uint16_t version;
-	/** Master secret */
-	uint8_t master_secret[48];
-	/** Digest algorithm used for handshake verification */
-	struct digest_algorithm *handshake_digest;
-	/** Digest algorithm context used for handshake verification */
-	uint8_t *handshake_ctx;
+	/** Key exchange algorithm */
+	struct exchange_algorithm *exchange;
 	/** Secure renegotiation flag */
 	int secure_renegotiation;
 	/** Extended master secret flag */
@@ -465,6 +464,8 @@ struct tls_connection {
 	/** Verification data */
 	struct tls_verify_data verify;
 
+	/** Secure channel */
+	struct secure_channel channel;
 	/** Key schedule */
 	struct tls_key_schedule key;
 	/** Transmit state */
@@ -508,6 +509,8 @@ struct tls_connection {
 
 /** RX I/O buffer alignment */
 #define TLS_RX_ALIGN 16
+
+extern struct exchange_algorithm tls_classic_pre_master_algorithm;
 
 extern struct tls_key_exchange_algorithm tls_pubkey_exchange_algorithm;
 extern struct tls_key_exchange_algorithm tls_dhe_exchange_algorithm;

@@ -80,6 +80,8 @@ struct cipher_algorithm {
 	size_t alignsize;
 	/** Authentication tag size */
 	size_t authsize;
+	/** Cipher is capable of providing confidentiality */
+	int confidential;
 	/** Set key
 	 *
 	 * @v cipher	Cipher algorithm
@@ -404,6 +406,11 @@ exchange_agree ( struct exchange_algorithm *exchange, const void *private,
 }
 
 static inline __attribute__ (( always_inline )) int
+is_key_transport ( struct exchange_algorithm *exchange ) {
+	return ( exchange->pubsize == 0 );
+}
+
+static inline __attribute__ (( always_inline )) int
 elliptic_is_infinity ( struct elliptic_curve *curve, const void *point ) {
 	return curve->is_infinity ( curve, point );
 }
@@ -458,9 +465,15 @@ extern int pubkey_null_verify ( struct pubkey_algorithm *pubkey,
 extern int pubkey_null_match ( struct pubkey_algorithm *pubkey,
 			       const struct asn1_cursor *private_key,
 			       const struct asn1_cursor *public_key );
+extern int exchange_null_share ( struct exchange_algorithm *exchange,
+				 const void *private, void *public );
+extern int exchange_null_agree ( struct exchange_algorithm *exchange,
+				 const void *private, const void *partner,
+				 void *shared );
 
 extern struct digest_algorithm digest_null;
 extern struct cipher_algorithm cipher_null;
 extern struct pubkey_algorithm pubkey_null;
+extern struct exchange_algorithm exchange_null;
 
 #endif /* _IPXE_CRYPTO_H */

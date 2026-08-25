@@ -97,6 +97,7 @@ struct cipher_algorithm cipher_null = {
 	.blocksize = 1,
 	.alignsize = 1,
 	.authsize = 0,
+	.confidential = 0,
 	.setkey = cipher_null_setkey,
 	.setiv = cipher_null_setiv,
 	.encrypt = cipher_null_encrypt,
@@ -147,4 +148,26 @@ struct pubkey_algorithm pubkey_null = {
 	.sign = pubkey_null_sign,
 	.verify = pubkey_null_verify,
 	.match = pubkey_null_match,
+};
+
+int exchange_null_share ( struct exchange_algorithm *exchange __unused,
+			  const void *private __unused,
+			  void *public __unused ) {
+	return -ENOTTY;
+}
+
+int exchange_null_agree ( struct exchange_algorithm *exchange __unused,
+			  const void *private __unused,
+			  const void *partner __unused,
+			  void *shared __unused ) {
+	return -ENOTTY;
+}
+
+struct exchange_algorithm exchange_null = {
+	.name = "null",
+	.privsize = 0,
+	.pubsize = 0,
+	.sharedsize = 0,
+	.share = exchange_null_share,
+	.agree = exchange_null_agree,
 };
