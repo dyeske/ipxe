@@ -149,6 +149,9 @@ static struct aes_table aes_mixcolumns;
 /** AES InvMixColumns lookup table */
 static struct aes_table aes_invmixcolumns;
 
+/** AES hardware acceleration mode has been selected */
+static int aes_selected;
+
 /**
  * Multiply [Inv]MixColumns matrix column by scalar multiplicand
  *
@@ -423,7 +426,7 @@ static unsigned int aes_rounds ( const struct aes_context *aes ) {
  */
 static void aes_encrypt ( struct cipher_algorithm *cipher __unused, void *ctx,
 			  const void *src, void *dst, size_t len ) {
-	const struct aes_context *aes = ctx;
+	const struct aes_context *aes = aes_context ( ctx );
 	const union aes_matrix *key = aes->encrypt.key;
 	union aes_matrix buffer[2];
 	union aes_matrix *in = &buffer[0];
@@ -460,7 +463,7 @@ static void aes_encrypt ( struct cipher_algorithm *cipher __unused, void *ctx,
  */
 static void aes_decrypt ( struct cipher_algorithm *cipher __unused, void *ctx,
 			  const void *src, void *dst, size_t len ) {
-	const struct aes_context *aes = ctx;
+	const struct aes_context *aes = aes_context ( ctx );
 	const union aes_matrix *key = aes->decrypt.key;
 	union aes_matrix buffer[2];
 	union aes_matrix *in = &buffer[0];
@@ -708,7 +711,7 @@ aes_key_rcon ( uint32_t column, unsigned int rcon ) {
  */
 static int aes_setkey ( struct cipher_algorithm *cipher __unused, void *ctx,
 			const void *key, size_t keylen ) {
-	struct aes_context *aes = ctx;
+	struct aes_context *aes = aes_context ( ctx );
 	union aes_matrix *enc;
 	union aes_matrix *dec;
 	union aes_matrix temp;
@@ -720,6 +723,12 @@ static int aes_setkey ( struct cipher_algorithm *cipher __unused, void *ctx,
 	uint32_t *next;
 	uint32_t *end;
 	uint32_t tmp;
+
+	/* Attempt (once) to enable AES hardware acceleration */
+	if ( ! aes_selected ) {
+		aes_accelerate();
+		aes_selected = 1;
+	}
 
 	/* Generate lookup tables, if not already done */
 	if ( ! aes_mixcolumns.entry[0].byte[0] )
@@ -806,6 +815,32 @@ static int aes_setkey ( struct cipher_algorithm *cipher __unused, void *ctx,
 	DBGC2_HDA ( aes, 0, &aes->decrypt, ( rounds * sizeof ( *dec ) ) );
 
 	return 0;
+}
+
+/**
+ * Disable hardware acceleration (for testing)
+ *
+ */
+void aes_decelerate ( void ) {
+
+	/* Restore original algorithm pointers */
+	aes_algorithm.encrypt = aes_encrypt;
+	aes_algorithm.decrypt = aes_decrypt;
+	DBGC ( &aes_algorithm, "AES disabled hardware acceleration\n" );
+
+	/* Mark hardware acceleration mode as selected */
+	aes_selected = 1;
+}
+
+/**
+ * Check if hardware acceleration is currently enabled (for testing)
+ *
+ * @ret is_accelerated	AES is using hardware acceleration
+ */
+int aes_is_accelerated ( void ) {
+
+	/* Check if hardware acceleration is enabled */
+	return ( aes_algorithm.encrypt != aes_encrypt );
 }
 
 /** Basic AES algorithm */

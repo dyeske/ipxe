@@ -303,9 +303,6 @@ FILE_SECBOOT ( PERMITTED );
 //#define GDBSERIAL		/* Remote GDB debugging over serial */
 //#define GDBUDP		/* Remote GDB debugging over UDP */
 //#define EFI_DOWNGRADE_UX	/* Downgrade UEFI user experience */
-#define TIVOLI_VMM_WORKAROUND	/* Work around the Tivoli VMM's garbling of SSE
-				 * registers when iPXE traps to it due to
-				 * privileged instructions */
 //#define ERRMSG_80211		/* All 802.11 error descriptions (~3.3kb) */
 
 #include <config/named.h>

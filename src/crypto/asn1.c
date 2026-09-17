@@ -151,6 +151,10 @@ FILE_SECBOOT ( PERMITTED );
 	__einfo_error ( EINFO_ENOTSUP_ALGORITHM )
 #define EINFO_ENOTSUP_ALGORITHM \
 	__einfo_uniqify ( EINFO_ENOTSUP, 0x01, "Unsupported algorithm" )
+#define ENOTSUP_HIGH \
+	__einfo_error ( EINFO_ENOTSUP_HIGH )
+#define EINFO_ENOTSUP_HIGH \
+	__einfo_uniqify ( EINFO_ENOTSUP, 0x02, "Unsupported high tag number" )
 #define ENOTTY_ALGORITHM \
 	__einfo_error ( EINFO_ENOTTY_ALGORITHM )
 #define EINFO_ENOTTY_ALGORITHM \
@@ -175,6 +179,7 @@ FILE_SECBOOT ( PERMITTED );
 static int asn1_start ( struct asn1_cursor *cursor, unsigned int type ) {
 	unsigned int len_len;
 	unsigned int len;
+	uint8_t high_byte;
 
 	/* Sanity check */
 	if ( cursor->len < 2 /* Tag byte and first length byte */ ) {
@@ -182,6 +187,14 @@ static int asn1_start ( struct asn1_cursor *cursor, unsigned int type ) {
 			DBGC ( cursor, "ASN1 %p too short\n", cursor );
 		asn1_invalidate_cursor ( cursor );
 		return -EINVAL_ASN1_EMPTY;
+	}
+
+	/* Refuse to handle multi-byte tags */
+	if ( ( asn1_type ( cursor ) & ASN1_HIGH ) == ASN1_HIGH ) {
+		DBGC ( cursor, "ASN1 %p has unsupported high tag number\n",
+		       cursor );
+		asn1_invalidate_cursor ( cursor );
+		return -ENOTSUP_HIGH;
 	}
 
 	/* Check the tag byte */
@@ -202,22 +215,29 @@ static int asn1_start ( struct asn1_cursor *cursor, unsigned int type ) {
 	} else {
 		len_len = 1;
 	}
-	if ( cursor->len < len_len ) {
-		DBGC ( cursor, "ASN1 %p bad length field length %d (max "
-		       "%zd)\n", cursor, len_len, cursor->len );
+	if ( ( len_len == 0 ) || ( cursor->len < len_len ) ) {
+		DBGC ( cursor, "ASN1 %p bad length field length %d (min 0, "
+		       "max %zd)\n", cursor, len_len, cursor->len );
 		asn1_invalidate_cursor ( cursor );
 		return -EINVAL_ASN1_LEN_LEN;
 	}
 
 	/* Extract the length and sanity check */
 	for ( len = 0 ; len_len ; len_len-- ) {
+		high_byte = ( len >> ( 8 * ( sizeof ( len ) - 1 ) ) );
+		if ( high_byte ) {
+			DBGC ( cursor, "ASN1 %p unrepresentable length\n",
+			       cursor );
+			asn1_invalidate_cursor ( cursor );
+			return -EINVAL_ASN1_LEN;
+		}
 		len <<= 8;
 		len |= *( ( uint8_t * ) cursor->data );
 		cursor->data++;
 		cursor->len--;
 	}
-	if ( cursor->len < len ) {
-		DBGC ( cursor, "ASN1 %p bad length %d (max %zd)\n",
+	if ( ( cursor->len < len ) || ( ( ( int ) len ) < 0 ) ) {
+		DBGC ( cursor, "ASN1 %p bad length %d (min 0, max %zd)\n",
 		       cursor, len, cursor->len );
 		asn1_invalidate_cursor ( cursor );
 		return -EINVAL_ASN1_LEN;
@@ -437,17 +457,35 @@ int asn1_enter_bits ( struct asn1_cursor *cursor, unsigned int *unused ) {
  * @ret rc		Return status code
  */
 int asn1_enter_unsigned ( struct asn1_cursor *cursor ) {
+	uint8_t msb;
 	int rc;
 
 	/* Enter integer */
 	if ( ( rc = asn1_enter ( cursor, ASN1_INTEGER ) ) != 0 )
 		return rc;
 
-	/* Skip initial positive sign byte if applicable */
-	if ( ( cursor->len > 1 ) &&
-	     ( *( ( uint8_t * ) cursor->data ) == 0x00 ) ) {
+	/* Reject empty integers */
+	if ( ! cursor->len ) {
+		DBGC ( cursor, "ASN1 %p empty unsigned integer\n", cursor );
+		/* Cursor is already invalid */
+		return -EINVAL;
+	}
+
+	/* Reject negative values */
+	msb = *( ( uint8_t * ) cursor->data );
+	if ( msb & 0x80 ) {
+		DBGC ( cursor, "ASN1 %p negative unsigned integer:\n",
+		       cursor );
+		DBGC_HDA ( cursor, 0, cursor->data, cursor->len );
+		asn1_invalidate_cursor ( cursor );
+		return -EINVAL;
+	}
+
+	/* Skip any initial positive sign byte(s) */
+	while ( ( cursor->len > 1 ) && ( msb == 0x00 ) ) {
 		cursor->data++;
 		cursor->len--;
+		msb = *( ( uint8_t * ) cursor->data );
 	}
 
 	return 0;
@@ -974,6 +1012,18 @@ static size_t asn1_header ( struct asn1_builder_header *header,
 	}
 
 	return header_len;
+}
+
+/**
+ * Calculate ASN.1 header length
+ *
+ * @v len		Content length
+ * @ret header_len	Header length
+ */
+size_t asn1_header_len ( size_t len ) {
+	struct asn1_builder_header header;
+
+	return asn1_header ( &header, ASN1_ANY, len );
 }
 
 /**

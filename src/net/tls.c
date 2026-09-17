@@ -29,6 +29,7 @@ FILE_SECBOOT ( PERMITTED );
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <stdio.h>
 #include <string.h>
 #include <errno.h>
 #include <byteswap.h>
@@ -105,6 +106,14 @@ FILE_SECBOOT ( PERMITTED );
 #define EINFO_EINVAL_KEY_EXCHANGE					\
 	__einfo_uniqify ( EINFO_EINVAL, 0x0f,				\
 			  "Invalid Server Key Exchange record" )
+#define EINVAL_INNER __einfo_error ( EINFO_EINVAL_INNER )
+#define EINFO_EINVAL_INNER						\
+	__einfo_uniqify ( EINFO_EINVAL, 0x10,				\
+			  "Invalid inner plaintext" )
+#define EINVAL_SIGNATURE __einfo_error ( EINFO_EINVAL_SIGNATURE )
+#define EINFO_EINVAL_SIGNATURE						\
+	__einfo_uniqify ( EINFO_EINVAL, 0x11,				\
+			  "Invalid signature" )
 #define EIO_ALERT __einfo_error ( EINFO_EIO_ALERT )
 #define EINFO_EIO_ALERT							\
 	__einfo_uniqify ( EINFO_EIO, 0x01,				\
@@ -112,7 +121,7 @@ FILE_SECBOOT ( PERMITTED );
 #define ENOENT_CERT __einfo_error ( EINFO_ENOENT_CERT )
 #define EINFO_ENOENT_CERT						\
 	__einfo_uniqify ( EINFO_ENOENT, 0x01,				\
-			  "Missing server certificate" )
+			  "Missing certificate" )
 #define ENOENT_KEY_EXCHANGE __einfo_error ( EINFO_ENOENT_KEY_EXCHANGE )
 #define EINFO_ENOENT_KEY_EXCHANGE					\
 	__einfo_uniqify ( EINFO_ENOENT, 0x02,				\
@@ -189,10 +198,22 @@ FILE_SECBOOT ( PERMITTED );
 #define EINFO_EPERM_SAVE						\
 	__einfo_uniqify ( EINFO_EPERM, 0x07,				\
 			  "Pre-shared key was not established" )
+#define EPERM_DOWNGRADE __einfo_error ( EINFO_EPERM_DOWNGRADE )
+#define EINFO_EPERM_DOWNGRADE						\
+	__einfo_uniqify ( EINFO_EPERM, 0x08,				\
+			  "Downgrade attack detected" )
+#define EPERM_SESSION_ID __einfo_error ( EINFO_EPERM_SESSION_ID )
+#define EINFO_EPERM_SESSION_ID						\
+	__einfo_uniqify ( EINFO_EPERM, 0x09,				\
+			  "Session ID echo mismatch" )
 #define EPROTO_VERSION __einfo_error ( EINFO_EPROTO_VERSION )
 #define EINFO_EPROTO_VERSION						\
 	__einfo_uniqify ( EINFO_EPROTO, 0x01,				\
 			  "Illegal protocol version upgrade" )
+#define EPROTO_CIPHER_CHANGE __einfo_error ( EINFO_EPROTO_CIPHER_CHANGE )
+#define EINFO_EPROTO_CIPHER_CHANGE					\
+	__einfo_uniqify ( EINFO_EPROTO, 0x02,				\
+			  "Illegal cipher change mid-record" )
 
 /** List of TLS session */
 static LIST_HEAD ( tls_sessions );
@@ -209,6 +230,11 @@ static int tls_send_plaintext ( struct tls_connection *tls, unsigned int type,
 static void tls_clear_digest ( struct tls_connection *tls );
 static void tls_clear_cipher ( struct tls_connection *tls,
 			       struct tls_cipherspec *cipherspec );
+static int tls_client_hello ( struct tls_connection *tls,
+			      int ( * action ) ( struct tls_connection *tls,
+						 const void *data,
+						 size_t len ) );
+static int tls_validator_start ( struct tls_connection *tls );
 
 /******************************************************************************
  *
@@ -216,6 +242,14 @@ static void tls_clear_cipher ( struct tls_connection *tls,
  *
  ******************************************************************************
  */
+
+/** Number of supported TLS versions */
+#define TLS_NUM_VERSIONS ( TLS_VERSION_MAX - TLS_VERSION_MIN + 1 )
+
+/** Maximum pre-TLSv1.3 version */
+#define TLS_LEGACY_VERSION_MAX						\
+	( ( TLS_VERSION_MAX <= TLS_VERSION_TLS_1_2 ) ?			\
+	  TLS_VERSION_MAX : TLS_VERSION_TLS_1_2 )
 
 /** A TLS 24-bit integer
  *
@@ -255,6 +289,21 @@ static void tls_set_uint24 ( tls24_t *field24, unsigned long value ) {
 }
 
 /**
+ * XOR data block
+ *
+ * @v dst		Destination data
+ * @v src		Source data
+ * @v len		Length of data
+ */
+static void tls_xor ( void *dst, const void *src, size_t len ) {
+	const uint8_t *src_bytes = src;
+	uint8_t *dst_bytes = dst;
+
+	while ( len-- )
+		*(dst_bytes++) ^= *(src_bytes++);
+}
+
+/**
  * Determine if TLS connection is ready for application data
  *
  * @v tls		TLS connection
@@ -274,12 +323,29 @@ static int tls_ready ( struct tls_connection *tls ) {
  *
  * Check that TLS connection uses at least the specified protocol
  * version.  Optimise down to a compile-time constant true result if
- * this is already guaranteed by the minimum supported version check.
+ * this is already guaranteed by the minimum or maximum supported
+ * version check.
  */
 static inline __attribute__ (( always_inline )) int
 tls_version ( struct tls_connection *tls, unsigned int version ) {
-	return ( ( TLS_VERSION_MIN >= version ) ||
-		 ( tls->version >= version ) );
+
+	return ( ( TLS_VERSION_MAX >= version ) &&
+		 ( ( TLS_VERSION_MIN >= version ) ||
+		   ( tls->version >= version ) ) );
+}
+
+/**
+ * Check if TLS inner plaintext is in use
+ *
+ * @v tls		TLS connection
+ * @v cipher		Active cipher algorithm
+ * @ret has_inner	Inner plaintext is in use
+ */
+static inline __attribute__ (( always_inline )) int
+tls_has_inner ( struct tls_connection *tls, struct cipher_algorithm *cipher ) {
+
+	return ( tls_version ( tls, TLS_VERSION_TLS_1_3 ) &&
+		 ( cipher != &cipher_null ) );
 }
 
 /**
@@ -350,10 +416,9 @@ static void free_tls ( struct refcnt *refcnt ) {
 	/* Free dynamically-allocated resources */
 	zfree ( tls->new_ticket.data );
 	tls_clear_digest ( tls );
-	tls_clear_cipher ( tls, &tls->tx.cipherspec.active );
-	tls_clear_cipher ( tls, &tls->tx.cipherspec.pending );
-	tls_clear_cipher ( tls, &tls->rx.cipherspec.active );
-	tls_clear_cipher ( tls, &tls->rx.cipherspec.pending );
+	free ( tls->verify.dynamic );
+	tls_clear_cipher ( tls, &tls->tx.cipherspec );
+	tls_clear_cipher ( tls, &tls->rx.cipherspec );
 	list_for_each_entry_safe ( iobuf, tmp, &tls->rx.data, list ) {
 		list_del ( &iobuf->list );
 		free_iob ( iobuf );
@@ -479,7 +544,9 @@ static int tls_set_digest ( struct tls_connection *tls,
 	tls_clear_digest ( tls );
 
 	/* Select key schedule */
-	if ( tls_version ( tls, TLS_VERSION_TLS_1_2 ) ) {
+	if ( tls_version ( tls, TLS_VERSION_TLS_1_3 ) ) {
+		op = &tlskey_hkdf;
+	} else if ( tls_version ( tls, TLS_VERSION_TLS_1_2 ) ) {
 		op = &tlskey_hash;
 	} else {
 		op = &tlskey_md5_sha1;
@@ -498,6 +565,23 @@ static int tls_set_digest ( struct tls_connection *tls,
 	return 0;
 }
 
+/**
+ * Add handshake record to verification hash
+ *
+ * @v tls		TLS connection
+ * @v data		Handshake record
+ * @v len		Length of handshake record
+ * @ret rc		Return status code
+ */
+static int tls_add_handshake ( struct tls_connection *tls,
+			       const void *data, size_t len ) {
+
+	/* Record in transcript digest */
+	tlskey_digest ( &tls->key, data, len );
+
+	return 0;
+}
+
 /******************************************************************************
  *
  * Cipher suite management
@@ -511,10 +595,46 @@ struct tls_cipher_suite tls_cipher_suite_null = {
 	.pubkey = &pubkey_null,
 	.cipher = &cipher_null,
 	.digest = &digest_null,
+	.handshake = &digest_null,
 };
 
 /** Number of supported cipher suites */
 #define TLS_NUM_CIPHER_SUITES table_num_entries ( TLS_CIPHER_SUITES )
+
+/**
+ * Get cipher suite name (for debugging)
+ *
+ * @v suite		Cipher suite
+ * @ret name		Cipher suite name
+ */
+static const char * tls_cipher_name ( struct tls_cipher_suite *suite ) {
+	struct tls_key_exchange_algorithm *exchange = suite->exchange;
+	struct pubkey_algorithm *pubkey = suite->pubkey;
+	struct cipher_algorithm *cipher = suite->cipher;
+	struct digest_algorithm *digest = suite->digest;
+	struct digest_algorithm *handshake = suite->handshake;
+	const char *exchange_name;
+	const char *pubkey_name;
+	const char *digest_name;
+	static char buf[64];
+
+	/* Strip uninteresting name components */
+	exchange_name = ( ( exchange == &tls_pubkey_exchange_algorithm ) ?
+			  NULL : exchange->name );
+	pubkey_name = ( ( pubkey == &pubkey_null ) ? NULL : pubkey->name );
+	digest_name = ( ( digest == &digest_null ) ?
+			handshake->name : digest->name );
+
+	/* Construct name */
+	snprintf ( buf, sizeof ( buf ), "%s%s%s%s%s-%d-%s",
+		   ( exchange_name ? exchange_name : "" ),
+		   ( exchange_name ? "-" : "" ),
+		   ( pubkey_name ? pubkey_name : "" ),
+		   ( pubkey_name ? "-" : "" ),
+		   cipher->name, ( suite->key_len * 8 ), digest_name );
+
+	return buf;
+}
 
 /**
  * Identify cipher suite
@@ -536,53 +656,33 @@ tls_find_cipher_suite ( unsigned int cipher_suite ) {
 }
 
 /**
- * Clear cipher specification
- *
- * @v cipherspec	TLS cipher specification
- */
-static void tls_clear_cipher ( struct tls_connection *tls __unused,
-			       struct tls_cipherspec *cipherspec ) {
-
-	zfree ( cipherspec->dynamic );
-	memset ( cipherspec, 0, sizeof ( *cipherspec ) );
-	cipherspec->suite = &tls_cipher_suite_null;
-}
-
-/**
- * Set cipher specification
+ * Set verification data length
  *
  * @v tls		TLS connection
- * @v cipherspec	TLS cipher specification
- * @v suite		Cipher suite
+ * @v verify_len	Verification data length
  * @ret rc		Return status code
  */
-static int tls_set_cipher ( struct tls_connection *tls,
-			    struct tls_cipherspec *cipherspec,
-			    struct tls_cipher_suite *suite ) {
+static int tls_set_verify_len ( struct tls_connection *tls,
+				size_t verify_len ) {
+	struct tls_verify_data *verify = &tls->verify;
 	size_t total;
 	void *dynamic;
 
-	/* Clear out old cipher contents, if any */
-	tls_clear_cipher ( tls, cipherspec );
+	/* Free any existing dynamically allocated storage */
+	free ( verify->dynamic );
+	memset ( verify, 0, sizeof ( *verify ) );
 
 	/* Allocate dynamic storage */
-	total = ( suite->key_len + suite->mac_len + suite->fixed_iv_len );
+	total = ( verify_len * 2 );
 	dynamic = zalloc ( total );
-	if ( ! dynamic ) {
-		DBGC ( tls, "TLS %p could not allocate %zd bytes for crypto "
-		       "context\n", tls, total );
-		return -ENOMEM_CONTEXT;
-	}
+	if ( ! dynamic )
+		return -ENOMEM;
 
 	/* Assign storage */
-	cipherspec->dynamic = dynamic;
-	cipherspec->cipher_key = dynamic;	dynamic += suite->key_len;
-	cipherspec->mac_secret = dynamic;	dynamic += suite->mac_len;
-	cipherspec->fixed_iv = dynamic;		dynamic += suite->fixed_iv_len;
-	assert ( ( cipherspec->dynamic + total ) == dynamic );
-
-	/* Store parameters */
-	cipherspec->suite = suite;
+	verify->dynamic = dynamic;
+	verify->client = dynamic;		dynamic += verify_len;
+	verify->server = dynamic;		dynamic += verify_len;
+	assert ( ( verify->dynamic + total ) == dynamic );
 
 	return 0;
 }
@@ -603,13 +703,18 @@ static int tls_select_cipher ( struct tls_connection *tls,
 	/* Identify cipher suite */
 	suite = tls_find_cipher_suite ( cipher_suite );
 	if ( ! suite ) {
-		DBGC ( tls, "TLS %p does not support cipher %04x\n",
+		DBGC ( tls, "TLS %p does not support cipher suite %#04x\n",
 		       tls, ntohs ( cipher_suite ) );
 		return -ENOTSUP_CIPHER;
 	}
 
-	/* Set (or clear) key exchange algorithm */
-	tls->exchange = suite->exchange->exchange;
+	/* Sanity checks */
+	if ( ! ( suite->exchange && suite->pubkey && suite->cipher &&
+		 suite->digest && suite->handshake ) ) {
+		DBGC ( tls, "TLS %p cannot use broken cipher suite %#04x\n",
+		       tls, ntohs ( cipher_suite ) );
+		return -ENOTSUP_CIPHER;
+	}
 
 	/* Set key schedule digest algorithm */
 	digest = ( tls_version ( tls, TLS_VERSION_TLS_1_2 ) ?
@@ -617,84 +722,195 @@ static int tls_select_cipher ( struct tls_connection *tls,
 	if ( ( rc = tls_set_digest ( tls, digest ) ) != 0 )
 		return rc;
 
-	/* Set ciphers */
-	if ( ( rc = tls_set_cipher ( tls, &tls->tx.cipherspec.pending,
-				     suite ) ) != 0 )
-		return rc;
-	if ( ( rc = tls_set_cipher ( tls, &tls->rx.cipherspec.pending,
-				     suite ) ) != 0 )
+	/* Add initial Client Hello to handshake digest
+	 *
+	 * When the Client Hello was originally sent, the digest
+	 * algorithm selected by the server's choice of cipher suite
+	 * was not yet known.  This is the earliest point at which it
+	 * can be incorporated into the handshake transcript digest.
+	 */
+	if ( ( rc = tls_client_hello ( tls, tls_add_handshake ) ) != 0 )
 		return rc;
 
-	DBGC ( tls, "TLS %p selected cipher suite %s-%s-%s-%d-%s\n",
-	       tls, suite->exchange->name, suite->pubkey->name,
-	       suite->cipher->name, ( suite->key_len * 8 ),
-	       suite->digest->name );
+	/* Set verification data length */
+	if ( ( rc = tls_set_verify_len ( tls, suite->verify_len ) ) != 0 )
+		return rc;
+
+	/* Set default named group */
+	tls->group = suite->exchange->group;
+
+	/* Set cipher suite */
+	tls->suite = suite;
+	DBGC ( tls, "TLS %p selected cipher suite %s\n",
+	       tls, tls_cipher_name ( suite ) );
 
 	return 0;
 }
 
 /**
- * Activate next cipher suite
+ * Clear cipher specification
  *
  * @v tls		TLS connection
- * @v pair		Cipher specification pair
- * @v pipe		Secure pipe
+ * @v cipherspec	TLS cipher specification
+ */
+static void tls_clear_cipher ( struct tls_connection *tls __unused,
+			       struct tls_cipherspec *cipherspec ) {
+
+	/* Clear cipher */
+	channel_clear_cipher ( cipherspec->pipe );
+
+	/* Reset to the null cipher suite (with no dynamic storage) */
+	cipherspec->suite = &tls_cipher_suite_null;
+
+	/* Clear and free any dynamically-allocated storage */
+	zfree ( cipherspec->dynamic );
+	cipherspec->dynamic = NULL;
+	cipherspec->cipher_key = NULL;
+	cipherspec->mac_secret = NULL;
+	cipherspec->fixed_iv = NULL;
+
+	/* Reset sequence number */
+	cipherspec->seq = 0;
+}
+
+/**
+ * Prepare cipher specification for a new traffic phase
+ *
+ * @v tls		TLS connection
+ * @v cipherspec	TLS cipher specification
+ * @v phase		Traffic phase
+ * @ret rc		Return status code
+ */
+static int tls_prep_cipher ( struct tls_connection *tls,
+			     struct tls_cipherspec *cipherspec,
+			     const struct tls_phase *phase ) {
+	const struct tls_endpoint *writer = cipherspec->writer;
+	struct secure_pipe *pipe = cipherspec->pipe;
+	int rc;
+
+	/* Generate traffic secret */
+	if ( ( rc = tlskey_traffic ( &tls->key, writer, phase ) ) != 0 ) {
+		DBGC ( tls, "TLS %p could not generate %s %s traffic secret: "
+		       "%s\n", tls, tls_pipe_name ( tls, pipe ),
+		       writer->name, strerror ( rc ) );
+		return rc;
+	}
+
+	return 0;
+}
+
+/**
+ * Change cipher specification
+ *
+ * @v tls		TLS connection
+ * @v cipherspec	TLS cipher specification
+ * @v phase		New traffic phase (or NULL to retain existing phase)
  * @ret rc		Return status code
  */
 static int tls_change_cipher ( struct tls_connection *tls,
-			       struct tls_cipherspec_pair *pair,
-			       struct secure_pipe *pipe ) {
-	struct tls_cipherspec *pending = &pair->pending;
-	struct tls_cipherspec *active = &pair->active;
-	struct tls_cipher_suite *suite = pending->suite;
-	size_t mac_len = suite->mac_len;
-	size_t key_len = suite->key_len;
-	size_t iv_len = suite->fixed_iv_len;
+			       struct tls_cipherspec *cipherspec,
+			       const struct tls_phase *phase ) {
+	struct tls_cipher_suite *suite = tls->suite;
+	const struct tls_endpoint *writer = cipherspec->writer;
+	struct secure_pipe *pipe = cipherspec->pipe;
+	size_t total;
+	void *dynamic;
 	int rc;
+
+	/* Clear any existing cipher specification */
+	tls_clear_cipher ( tls, cipherspec );
 
 	/* Sanity check */
 	if ( suite == &tls_cipher_suite_null ) {
 		DBGC ( tls, "TLS %p refusing to use null %s cipher\n",
 		       tls, tls_pipe_name ( tls, pipe ) );
-		return -ENOTSUP_NULL;
+		rc = -ENOTSUP_NULL;
+		goto err_null;
 	}
 
-	/* Generate traffic secret */
-	if ( ( rc = tlskey_traffic ( &tls->key, pair->writer,
-				     &tls_application ) ) != 0 ) {
-		DBGC ( tls, "TLS %p could not generate %s %s traffic secret: "
-		       "%s\n", tls, tls_pipe_name ( tls, pipe ),
-		       pair->writer->name, strerror ( rc ) );
-		return rc;
+	/* Allocate dynamic storage */
+	total = ( suite->key_len + suite->mac_len + suite->fixed_iv_len );
+	dynamic = zalloc ( total );
+	if ( ! dynamic ) {
+		DBGC ( tls, "TLS %p could not allocate %zd bytes for crypto "
+		       "context\n", tls, total );
+		rc = -ENOMEM_CONTEXT;
+		goto err_alloc;
+	}
+
+	/* Assign storage */
+	cipherspec->dynamic = dynamic;
+	cipherspec->cipher_key = dynamic;	dynamic += suite->key_len;
+	cipherspec->mac_secret = dynamic;	dynamic += suite->mac_len;
+	cipherspec->fixed_iv = dynamic;		dynamic += suite->fixed_iv_len;
+	assert ( ( cipherspec->dynamic + total ) == dynamic );
+
+	/* Record cipher suite */
+	cipherspec->suite = suite;
+
+	/* Prepare for new traffic phase, if applicable */
+	if ( phase &&
+	     ( ( rc = tls_prep_cipher ( tls, cipherspec, phase ) ) != 0 ) ) {
+		goto err_prep;
 	}
 
 	/* Generate cipher key material */
-	if ( ( rc = tlskey_cipher ( &tls->key, pair->writer,
-				    pending->cipher_key, key_len,
-				    pending->fixed_iv, iv_len,
-				    pending->mac_secret, mac_len ) ) != 0 ) {
+	if ( ( rc = tlskey_cipher ( &tls->key, writer,
+				    cipherspec->cipher_key, suite->key_len,
+				    cipherspec->fixed_iv, suite->fixed_iv_len,
+				    cipherspec->mac_secret,
+				    suite->mac_len ) ) != 0 ) {
 		DBGC ( tls, "TLS %p could not generate %s %s keys: %s\n",
-		       tls, tls_pipe_name ( tls, pipe ), pair->writer->name,
+		       tls, tls_pipe_name ( tls, pipe ), writer->name,
 		       strerror ( rc ) );
-		return rc;
+		goto err_cipher;
 	}
 
 	/* Set cipher algorithm and key */
 	if ( ( rc = channel_set_cipher ( &tls->channel, pipe, suite->cipher,
-					 pending->cipher_key,
-					 key_len ) ) != 0 ) {
+					 cipherspec->cipher_key,
+					 suite->key_len ) ) != 0 ) {
 		DBGC ( tls, "TLS %p could not set %s cipher: %s\n",
 		       tls, tls_pipe_name ( tls, pipe ), strerror ( rc ) );
-		return rc;
+		goto err_channel;
 	}
 
-	/* Swap in new cipher suite */
-	tls_clear_cipher ( tls, active );
-	memswap ( active, pending, sizeof ( *active ) );
-	DBGC ( tls, "TLS %p activated %s cipher %s-%s-%s-%d-%s\n",
-	       tls, tls_pipe_name ( tls, pipe ), suite->exchange->name,
-	       suite->pubkey->name, suite->cipher->name,
-	       ( suite->key_len * 8 ), suite->digest->name );
+	DBGC ( tls, "TLS %p activated %s cipher %s\n",
+	       tls, tls_pipe_name ( tls, pipe ), tls_cipher_name ( suite ) );
+	return 0;
+
+ err_channel:
+ err_cipher:
+ err_prep:
+	tls_clear_cipher ( tls, cipherspec );
+ err_alloc:
+ err_null:
+	return rc;
+}
+
+/**
+ * Apply pending traffic phase change (if any)
+ *
+ * @v tls		TLS connection
+ * @v cipherspec	TLS cipher specification
+ * @ret rc		Return status code
+ */
+static int tls_pending_cipher ( struct tls_connection *tls,
+				struct tls_cipherspec *cipherspec ) {
+	const struct tls_phase *pending;
+	int rc;
+
+	/* Do nothing if no change is pending */
+	pending = cipherspec->pending;
+	if ( ! pending )
+		return 0;
+
+	/* Change cipher */
+	if ( ( rc = tls_change_cipher ( tls, cipherspec, pending ) ) != 0 )
+		return rc;
+
+	/* Clear pending change */
+	cipherspec->pending = NULL;
 
 	return 0;
 }
@@ -804,10 +1020,46 @@ tls_find_param_group ( const void *dh_p, size_t dh_p_len, const void *dh_g,
 	return NULL;
 }
 
+/**
+ * Parse key exchange parameters from unexpected Server Key Exchange record
+ *
+ * @v data		Server Key Exchange handshake record
+ * @v len		Length of Server Key Exchange handshake record
+ * @v params		Key exchange parameters to fill in
+ * @ret rc		Return status code
+ */
+static int
+tls_parse_null ( struct tls_connection *tls, const void *data, size_t len,
+		 struct tls_key_exchange_parameters *params __unused ) {
+
+	DBGC ( tls, "TLS %p received unexpected ServerKeyExchange:\n", tls );
+	DBGC_HDA ( tls, 0, data, len );
+	return -EINVAL_KEY_EXCHANGE;
+}
+
+/** Null named group */
+struct tls_named_group tls_null_named_group __tls_anon_named_group = {
+	.exchange = &exchange_null,
+};
+
+/** Null key exchange algorithm */
+struct tls_key_exchange_algorithm tls_null_exchange_algorithm = {
+	.name = "null",
+	.group = &tls_null_named_group,
+	.parse = tls_parse_null,
+	.len_len = 0,
+};
+
+/** Public key named group */
+struct tls_named_group tls_pubkey_named_group __tls_anon_named_group = {
+	.exchange = &tls_classic_pre_master_algorithm,
+};
+
 /** Public key exchange algorithm */
 struct tls_key_exchange_algorithm tls_pubkey_exchange_algorithm = {
 	.name = "pubkey",
-	.exchange = &tls_classic_pre_master_algorithm,
+	.group = &tls_pubkey_named_group,
+	.parse = tls_parse_null,
 	.len_len = sizeof ( uint16_t ),
 };
 
@@ -867,7 +1119,7 @@ static int tls_parse_dhe ( struct tls_connection *tls,
 		DBGC_HDA ( tls, 0, data, len );
 		return -ENOTSUP_GROUP;
 	}
-	params->exchange = group->exchange;
+	params->group = group;
 	params->partner = dh_ys->data;
 	params->partner_len = ntohs ( dh_ys->len );
 
@@ -877,6 +1129,7 @@ static int tls_parse_dhe ( struct tls_connection *tls,
 /** Ephemeral Diffie-Hellman key exchange algorithm */
 struct tls_key_exchange_algorithm tls_dhe_exchange_algorithm = {
 	.name = "dhe",
+	.group = &tls_null_named_group,
 	.parse = tls_parse_dhe,
 	.len_len = sizeof ( uint16_t ),
 };
@@ -925,7 +1178,7 @@ static int tls_parse_ecdhe ( struct tls_connection *tls,
 		DBGC_HDA ( tls, 0, data, len );
 		return -ENOTSUP_GROUP;
 	}
-	params->exchange = group->exchange;
+	params->group = group;
 	params->partner = ecdh->public;
 	params->partner_len = ecdh->public_len;
 
@@ -935,6 +1188,7 @@ static int tls_parse_ecdhe ( struct tls_connection *tls,
 /** Ephemeral Elliptic Curve Diffie-Hellman key exchange algorithm */
 struct tls_key_exchange_algorithm tls_ecdhe_exchange_algorithm = {
 	.name = "ecdhe",
+	.group = &tls_null_named_group,
 	.parse = tls_parse_ecdhe,
 	.len_len = sizeof ( uint8_t ),
 };
@@ -973,15 +1227,16 @@ static int tls_keysize_is_variable ( struct tls_connection *tls,
  * Share public key
  *
  * @v tls		TLS connection
- * @v exchange		Key exchange algorithm
+ * @v group		Named group
  * @v public		Public key to fill in
  * @v len		Length of public key
  * @ret rc		Return status code
  */
 static int tls_key_share ( struct tls_connection *tls,
-			   struct exchange_algorithm *exchange,
+			   struct tls_named_group *group,
 			   void *public, size_t len ) {
 	struct secure_channel *channel = &tls->channel;
+	struct exchange_algorithm *exchange = group->exchange;
 	size_t pubsize = exchange->pubsize;
 	int rc;
 
@@ -1006,15 +1261,16 @@ static int tls_key_share ( struct tls_connection *tls,
  * Agree shared secret
  *
  * @v tls		TLS connection
- * @v exchange		Key exchange algorithm
+ * @v group		Named group
  * @v partner		Partner public key
  * @v len		Length of partner public key
  * @ret rc		Return status code
  */
 static int tls_key_agree ( struct tls_connection *tls,
-			   struct exchange_algorithm *exchange,
+			   struct tls_named_group *group,
 			   const void *partner, size_t len ) {
 	struct secure_channel *channel = &tls->channel;
+	struct exchange_algorithm *exchange = group->exchange;
 	size_t pubsize = exchange->pubsize;
 	uint8_t *tmp;
 	size_t pad_len;
@@ -1068,19 +1324,24 @@ static int tls_key_agree ( struct tls_connection *tls,
  * Encrypt (and implicitly bind) shared secret
  *
  * @v tls		TLS connection
- * @v exchange		Key exchange algorithm
+ * @v group		Named group
  * @v builder		ASN.1 builder
  * @ret rc		Return status code
  */
 static int tls_key_encrypt ( struct tls_connection *tls,
-			     struct exchange_algorithm *exchange,
+			     struct tls_named_group *group,
 			     struct asn1_builder *builder ) {
 	struct secure_channel *channel = &tls->channel;
-	struct x509_certificate *cert;
+	struct exchange_algorithm *exchange = group->exchange;
 	struct pubkey_algorithm *pubkey;
+	struct x509_certificate *cert;
 	int rc;
 
 	/* Identify server certificate */
+	if ( ! tls->server.chain ) {
+		DBGC ( tls, "TLS %p has no server certificate chain\n", tls );
+		return -ENOENT_CERT;
+	}
 	cert = x509_first ( tls->server.chain );
 	if ( ! cert ) {
 		DBGC ( tls, "TLS %p has no server certificate\n", tls );
@@ -1103,13 +1364,14 @@ static int tls_key_encrypt ( struct tls_connection *tls,
  * Build shareable key
  *
  * @v tls		TLS connection
- * @v exchange		Key exchange algorithm
+ * @v group		Named group
  * @v builder		ASN.1 builder
  * @ret rc		Return status code
  */
 static int tls_key_build ( struct tls_connection *tls,
-			   struct exchange_algorithm *exchange,
+			   struct tls_named_group *group,
 			   struct asn1_builder *builder ) {
+	struct exchange_algorithm *exchange = group->exchange;
 	size_t pubsize = exchange->pubsize;
 	int rc;
 
@@ -1121,7 +1383,7 @@ static int tls_key_build ( struct tls_connection *tls,
 			return rc;
 
 		/* Share public key */
-		if ( ( rc = tls_key_share ( tls, exchange, builder->data,
+		if ( ( rc = tls_key_share ( tls, group, builder->data,
 					    pubsize ) ) != 0 ) {
 			return rc;
 		}
@@ -1129,10 +1391,70 @@ static int tls_key_build ( struct tls_connection *tls,
 	} else {
 
 		/* Encrypt (and implicitly bind) shared secret */
-		if ( ( rc = tls_key_encrypt ( tls, exchange,
-					      builder ) ) != 0 ) {
+		if ( ( rc = tls_key_encrypt ( tls, group, builder ) ) != 0 )
 			return rc;
-		}
+	}
+
+	return 0;
+}
+
+/**
+ * Verify signature over parameters used to construct shared secret
+ *
+ * @v tls		TLS connection
+ * @v sig_hash		Signature hash algorithm
+ * @v sig		Signature
+ * @v sig_len		Length of signature
+ * @v params		Additional parameters
+ * @v params_len	Length of additional parameters
+ * @ret rc		Return status code
+ */
+static int tls_key_verify ( struct tls_connection *tls,
+			    struct tls_signature_hash_algorithm *sig_hash,
+			    const void *sig, size_t sig_len,
+			    const void *params, size_t params_len ) {
+	const struct asn1_cursor signature = { sig, sig_len };
+	struct pubkey_algorithm *pubkey = sig_hash->pubkey;
+	struct digest_algorithm *digest = sig_hash->digest;
+	struct x509_certificate *cert;
+	uint8_t tbshash[digest->digestsize];
+	int rc;
+
+	/* Identify server certificate */
+	if ( ! tls->server.chain ) {
+		DBGC ( tls, "TLS %p has no server certificate chain\n", tls );
+		return -ENOENT_CERT;
+	}
+	cert = x509_first ( tls->server.chain );
+	if ( ! cert ) {
+		DBGC ( tls, "TLS %p has no server certificate\n", tls );
+		return -ENOENT_CERT;
+	}
+
+	/* Identify algorithms */
+	if ( sig_hash->algorithm &&
+	     ( sig_hash->algorithm != cert->subject.public_key.algorithm ) ) {
+		DBGC ( tls, "TLS %p cannot use %s public key\n",
+		       tls, cert->subject.public_key.algorithm->name );
+		return -EPERM_KEY_EXCHANGE;
+	}
+	DBGC ( tls, "TLS %p using signature hash %s-%s\n",
+	       tls, pubkey->name, digest->name );
+
+	/* Calculate digest */
+	if ( ( rc = tlskey_tbshash ( &tls->key, &tls_server, digest, params,
+				     params_len, tbshash ) ) != 0 ) {
+		DBGC ( tls, "TLS %p could not generate signable digest: %s\n",
+		       tls, strerror ( rc ) );
+		return rc;
+	}
+
+	/* Verify signature and bind shared secret */
+	if ( ( rc = channel_bind_verify ( &tls->channel, cert, pubkey, digest,
+					  tbshash, &signature ) ) != 0 ) {
+		DBGC ( tls, "TLS %p failed signature verification: %s\n",
+		       tls, strerror ( rc ) );
+		return rc;
 	}
 
 	return 0;
@@ -1280,10 +1602,11 @@ static int tls_channel_verify ( struct secure_channel *channel,
 				const void *auth, size_t len ) {
 	struct tls_connection *tls =
 		container_of ( channel, struct tls_connection, channel );
+	struct tls_cipher_suite *suite = tls->suite;
 	int rc;
 
 	/* Sanity checks */
-	if ( len != sizeof ( tls->verify.server ) ) {
+	if ( ( len == 0 ) || ( len != suite->verify_len ) ) {
 		DBGC ( tls, "TLS %p invalid authenticator value:\n", tls );
 		DBGC_HDA ( tls, 0, auth, len );
 		return -EPERM_VERIFY;
@@ -1291,8 +1614,7 @@ static int tls_channel_verify ( struct secure_channel *channel,
 
 	/* Generate verification data */
 	if ( ( rc = tlskey_verify ( &tls->key, &tls_server,
-				    tls->verify.server,
-				    sizeof ( tls->verify.server ) ) ) != 0 ) {
+				    tls->verify.server, len ) ) != 0 ) {
 		DBGC ( tls, "TLS %p could not generate server verification: "
 		       "%s\n", tls, strerror ( rc ) );
 		return rc;
@@ -1447,23 +1769,6 @@ static int tls_resume ( struct tls_connection *tls ) {
  */
 
 /**
- * Add handshake record to verification hash
- *
- * @v tls		TLS connection
- * @v data		Handshake record
- * @v len		Length of handshake record
- * @ret rc		Return status code
- */
-static int tls_add_handshake ( struct tls_connection *tls,
-			       const void *data, size_t len ) {
-
-	/* Record in transcript digest */
-	tlskey_digest ( &tls->key, data, len );
-
-	return 0;
-}
-
-/**
  * Resume TX state machine
  *
  * @v tls		TLS connection
@@ -1570,6 +1875,11 @@ static int tls_client_hello ( struct tls_connection *tls,
 						 size_t len ) ) {
 	struct tls_session *session = tls->session;
 	size_t name_len = strlen ( session->name );
+	size_t reneg_len = ( tls->secure_renegotiation ?
+			     tls->suite->verify_len : 0 );
+	size_t pubsize = tls->group->exchange->pubsize;
+	unsigned int has_key_share_key = ( tls->group->code ? 1 : 0 );
+	unsigned int has_named_group = ( TLS_NUM_NAMED_GROUPS ? 1 : 0 );
 	struct {
 		uint16_t type;
 		uint16_t len;
@@ -1602,8 +1912,7 @@ static int tls_client_hello ( struct tls_connection *tls,
 		uint16_t len;
 		struct {
 			uint8_t len;
-			uint8_t data[ tls->secure_renegotiation ?
-				      sizeof ( tls->verify.client ) :0 ];
+			uint8_t data[reneg_len];
 		} __attribute__ (( packed )) data;
 	} __attribute__ (( packed )) *renegotiation_info_ext;
 	struct {
@@ -1626,14 +1935,35 @@ static int tls_client_hello ( struct tls_connection *tls,
 		uint16_t len;
 	} __attribute__ (( packed )) *extended_master_secret_ext;
 	struct {
+		uint16_t type;
+		uint16_t len;
+		struct {
+			uint8_t len;
+			uint16_t versions[TLS_NUM_VERSIONS];
+		} __attribute__ (( packed )) data;
+	} __attribute__ (( packed )) *supported_versions_ext;
+	struct {
+		uint16_t type;
+		uint16_t len;
+		struct {
+			uint16_t len;
+			struct {
+				uint16_t code;
+				uint16_t len;
+				uint8_t share[pubsize];
+			} __attribute__ (( packed )) key[has_key_share_key];
+		} __attribute__ (( packed )) data;
+	} __attribute__ (( packed )) *key_share_ext;
+	struct {
 		typeof ( *server_name_ext ) server_name;
 		typeof ( *max_fragment_length_ext ) max_fragment_length;
 		typeof ( *signature_algorithms_ext ) signature_algorithms;
 		typeof ( *renegotiation_info_ext ) renegotiation_info;
 		typeof ( *session_ticket_ext ) session_ticket;
 		typeof ( *extended_master_secret_ext ) extended_master_secret;
-		typeof ( *named_group_ext )
-			named_group[TLS_NUM_NAMED_GROUPS ? 1 : 0];
+		typeof ( *supported_versions_ext ) supported_versions;
+		typeof ( *key_share_ext ) key_share;
+		typeof ( *named_group_ext ) named_group[has_named_group];
 	} __attribute__ (( packed )) *extensions;
 	struct {
 		uint32_t type_length;
@@ -1647,28 +1977,37 @@ static int tls_client_hello ( struct tls_connection *tls,
 		uint8_t compression_methods[1];
 		uint16_t extensions_len;
 		typeof ( *extensions ) extensions;
-	} __attribute__ (( packed )) hello;
+	} __attribute__ (( packed )) *hello;
 	struct tls_cipher_suite *suite;
 	struct tls_signature_hash_algorithm *sighash;
 	struct tls_named_group *group;
+	unsigned int version;
 	unsigned int i;
+	int rc;
+
+	/* Allocate space for record */
+	hello = zalloc ( sizeof ( *hello ) );
+	if ( ! hello ) {
+		rc = -ENOMEM;
+		goto err_alloc;
+	}
 
 	/* Construct record */
-	memset ( &hello, 0, sizeof ( hello ) );
-	hello.type_length = ( cpu_to_le32 ( TLS_CLIENT_HELLO ) |
-			      htonl ( sizeof ( hello ) -
-				      sizeof ( hello.type_length ) ) );
-	hello.version = htons ( TLS_VERSION_MAX );
-	tls_nonce ( tls, &hello.random );
-	hello.session_id_len = session->id.len;
-	memcpy ( hello.session_id, session->id.data,
-		 sizeof ( hello.session_id ) );
-	hello.cipher_suite_len = htons ( sizeof ( hello.cipher_suites ) );
+	hello->type_length = ( cpu_to_le32 ( TLS_CLIENT_HELLO ) |
+			       htonl ( sizeof ( *hello ) -
+				       sizeof ( hello->type_length ) ) );
+	version = TLS_LEGACY_VERSION_MAX;
+	hello->version = htons ( version );
+	tls_nonce ( tls, &hello->random );
+	hello->session_id_len = session->id.len;
+	memcpy ( hello->session_id, session->id.data,
+		 sizeof ( hello->session_id ) );
+	hello->cipher_suite_len = htons ( sizeof ( hello->cipher_suites ) );
 	i = 0 ; for_each_table_entry ( suite, TLS_CIPHER_SUITES )
-		hello.cipher_suites[i++] = suite->code;
-	hello.compression_methods_len = sizeof ( hello.compression_methods );
-	hello.extensions_len = htons ( sizeof ( hello.extensions ) );
-	extensions = &hello.extensions;
+		hello->cipher_suites[i++] = suite->code;
+	hello->compression_methods_len = sizeof ( hello->compression_methods );
+	hello->extensions_len = htons ( sizeof ( hello->extensions ) );
+	extensions = &hello->extensions;
 
 	/* Construct server name extension */
 	server_name_ext = &extensions->server_name;
@@ -1723,8 +2062,20 @@ static int tls_client_hello ( struct tls_connection *tls,
 		= htons ( TLS_EXTENDED_MASTER_SECRET );
 	extended_master_secret_ext->len = 0;
 
+	/* Construct supported versions extension */
+	supported_versions_ext = &extensions->supported_versions;
+	supported_versions_ext->type = htons ( TLS_SUPPORTED_VERSIONS );
+	supported_versions_ext->len
+		= htons ( sizeof ( supported_versions_ext->data ) );
+	supported_versions_ext->data.len
+		= sizeof ( supported_versions_ext->data.versions );
+	for ( i = 0 ; i < TLS_NUM_VERSIONS ; i++ ) {
+		supported_versions_ext->data.versions[i]
+			= htons ( TLS_VERSION_MAX - i );
+	}
+
 	/* Construct named groups extension, if applicable */
-	if ( sizeof ( extensions->named_group ) ) {
+	if ( has_named_group ) {
 		named_group_ext = &extensions->named_group[0];
 		named_group_ext->type = htons ( TLS_NAMED_GROUP );
 		named_group_ext->len
@@ -1738,7 +2089,27 @@ static int tls_client_hello ( struct tls_connection *tls,
 		assert ( i == TLS_NUM_NAMED_GROUPS );
 	}
 
-	return action ( tls, &hello, sizeof ( hello ) );
+	/* Construct key share extension */
+	key_share_ext = &extensions->key_share;
+	key_share_ext->type = htons ( TLS_KEY_SHARE );
+	key_share_ext->len = htons ( sizeof ( key_share_ext->data ) );
+	key_share_ext->data.len
+		= htons ( sizeof ( key_share_ext->data.key ) );
+	if ( has_key_share_key ) {
+		key_share_ext->data.key[0].code = tls->group->code;
+		key_share_ext->data.key[0].len = htons ( pubsize );
+		tls_key_share ( tls, tls->group,
+				key_share_ext->data.key[0].share, pubsize );
+	}
+
+	/* Send (or digest) record */
+	if ( ( rc = action ( tls, hello, sizeof ( *hello ) ) ) != 0 )
+		goto err_action;
+
+ err_action:
+	free ( hello );
+ err_alloc:
+	return rc;
 }
 
 /**
@@ -1772,6 +2143,12 @@ static int tls_send_certificate ( struct tls_connection *tls ) {
 	struct x509_certificate *cert;
 	struct io_buffer *iobuf;
 	size_t len;
+
+	/* Sanity check */
+	if ( ! tls->client.chain ) {
+		DBGC ( tls, "TLS %p has no client certificate chain\n", tls );
+		return -ENOENT_CERT;
+	}
 
 	/* Calculate length of client certificates */
 	len = 0;
@@ -1816,9 +2193,8 @@ static int tls_send_certificate ( struct tls_connection *tls ) {
  * @ret rc		Return status code
  */
 static int tls_send_client_key_exchange ( struct tls_connection *tls ) {
-	struct tls_cipherspec *cipherspec = &tls->tx.cipherspec.pending;
-	struct tls_cipher_suite *suite = cipherspec->suite;
-	struct exchange_algorithm *exchange = tls->exchange;
+	struct tls_cipher_suite *suite = tls->suite;
+	struct tls_named_group *group = tls->group;
 	struct {
 		uint32_t type_length;
 		uint8_t key_len[suite->exchange->len_len];
@@ -1829,15 +2205,15 @@ static int tls_send_client_key_exchange ( struct tls_connection *tls ) {
 	int i;
 	int rc;
 
-	/* Fail if we have not selected a key exchange algorithm */
-	if ( ! exchange ) {
-		DBGC ( tls, "TLS %p has no key exchange algorithm\n", tls );
+	/* Fail if we have not selected a named group */
+	if ( ! group ) {
+		DBGC ( tls, "TLS %p has no key exchange group\n", tls );
 		rc = -ENOENT_KEY_EXCHANGE;
-		goto err_exchange;
+		goto err_group;
 	}
 
 	/* Build shareable key */
-	if ( ( rc = tls_key_build ( tls, exchange, &builder ) ) != 0 )
+	if ( ( rc = tls_key_build ( tls, group, &builder ) ) != 0 )
 		goto err_build;
 	len = builder.len;
 
@@ -1878,7 +2254,7 @@ static int tls_send_client_key_exchange ( struct tls_connection *tls ) {
  err_send:
  err_prepend:
  err_build:
- err_exchange:
+ err_group:
 	free ( builder.data );
 	return rc;
 }
@@ -1891,14 +2267,28 @@ static int tls_send_client_key_exchange ( struct tls_connection *tls ) {
  */
 static int tls_send_certificate_verify ( struct tls_connection *tls ) {
 	struct digest_algorithm *digest = tls->key.digest;
-	struct x509_certificate *cert = x509_first ( tls->client.chain );
-	struct pubkey_algorithm *pubkey = cert->signature_algorithm->pubkey;
 	struct asn1_cursor *key = privkey_cursor ( tls->client.key );
 	struct tls_signature_hash_algorithm *sig_hash = NULL;
 	struct asn1_builder builder = { NULL, 0 };
+	struct x509_certificate *cert;
+	struct pubkey_algorithm *pubkey;
 	size_t digestsize = digest->digestsize;
 	uint8_t tbshash[digestsize];
 	int rc;
+
+	/* Sanity checks */
+	if ( ! tls->client.chain ) {
+		DBGC ( tls, "TLS %p has no client certificate chain\n", tls );
+		rc = -ENOENT_CERT;
+		goto err_chain;
+	}
+	cert = x509_first ( tls->client.chain );
+	if ( ! cert ) {
+		DBGC ( tls, "TLS %p has no client certificate\n", tls );
+		rc = -ENOENT_CERT;
+		goto err_cert;
+	}
+	pubkey = cert->signature_algorithm->pubkey;
 
 	/* TLSv1.2 and later use explicit algorithm identifiers */
 	if ( tls_version ( tls, TLS_VERSION_TLS_1_2 ) ) {
@@ -1967,6 +2357,8 @@ static int tls_send_certificate_verify ( struct tls_connection *tls ) {
  err_pubkey_sign:
  err_tbshash:
  err_sig_hash:
+ err_cert:
+ err_chain:
 	zfree ( builder.data );
 	return rc;
 }
@@ -1983,9 +2375,22 @@ static int tls_send_change_cipher ( struct tls_connection *tls ) {
 	} __attribute__ (( packed )) change_cipher = {
 		.spec = TLS_CHANGE_CIPHER_SPEC,
 	};
+	int rc;
 
-	return tls_send_plaintext ( tls, TLS_TYPE_CHANGE_CIPHER,
-				    &change_cipher, sizeof ( change_cipher ) );
+	/* Transmit record */
+	if ( ( rc = tls_send_plaintext ( tls, TLS_TYPE_CHANGE_CIPHER,
+					 &change_cipher,
+					 sizeof ( change_cipher ) ) ) != 0 ) {
+		return rc;
+	}
+
+	/* Change transmit cipher spec */
+	if ( ( rc = tls_change_cipher ( tls, &tls->tx.cipherspec,
+					&tls_application ) ) != 0 ) {
+		return rc;
+	}
+
+	return 0;
 }
 
 /**
@@ -1995,16 +2400,18 @@ static int tls_send_change_cipher ( struct tls_connection *tls ) {
  * @ret rc		Return status code
  */
 static int tls_send_finished ( struct tls_connection *tls ) {
+	struct tls_cipherspec *cipherspec = &tls->tx.cipherspec;
+	struct tls_cipher_suite *suite = tls->suite;
+	size_t verify_len = suite->verify_len;
 	struct {
 		uint32_t type_length;
-		uint8_t verify_data[ sizeof ( tls->verify.client ) ];
+		uint8_t verify_data[verify_len];
 	} __attribute__ (( packed )) finished;
 	int rc;
 
 	/* Construct client verification data */
-	if ( ( rc = tlskey_verify ( &tls->key, &tls_client,
-				    tls->verify.client,
-				    sizeof ( tls->verify.client ) ) ) != 0 ) {
+	if ( ( rc = tlskey_verify ( &tls->key, &tls_client, tls->verify.client,
+				    verify_len ) ) != 0 ) {
 		DBGC ( tls, "TLS %p could not generate client verification: "
 		       "%s\n", tls, strerror ( rc ) );
 		return rc;
@@ -2015,13 +2422,31 @@ static int tls_send_finished ( struct tls_connection *tls ) {
 	finished.type_length = ( cpu_to_le32 ( TLS_FINISHED ) |
 				 htonl ( sizeof ( finished ) -
 					 sizeof ( finished.type_length ) ) );
-	memcpy ( finished.verify_data, tls->verify.client,
-		 sizeof ( finished.verify_data ) );
+	memcpy ( finished.verify_data, tls->verify.client, verify_len );
+
+	/* TLS version 1.3 has an awkward design quirk in which the
+	 * application traffic secret must be generated using the
+	 * digest state prior to sending the client Finished, but the
+	 * corresponding application traffic keys must not be
+	 * activated until after sending the record.
+	 */
+	if ( tls_version ( tls, TLS_VERSION_TLS_1_3 ) &&
+	     ( ( rc = tls_prep_cipher ( tls, cipherspec,
+					&tls_application ) ) != 0 ) ) {
+		return rc;
+	}
 
 	/* Transmit record */
 	if ( ( rc = tls_send_handshake ( tls, &finished,
-					 sizeof ( finished ) ) ) != 0 )
+					 sizeof ( finished ) ) ) != 0 ) {
 		return rc;
+	}
+
+	/* Change the (already prepared) cipher specification */
+	if ( tls_version ( tls, TLS_VERSION_TLS_1_3 ) &&
+	     ( ( rc = tls_change_cipher ( tls, cipherspec, NULL ) ) != 0 ) ) {
+		return rc;
+	}
 
 	/* Mark client as finished */
 	pending_put ( &tls->client.negotiation );
@@ -2071,7 +2496,6 @@ static int tls_new_change_cipher ( struct tls_connection *tls,
 		uint8_t spec;
 	} __attribute__ (( packed )) *change_cipher = iobuf->data;
 	size_t len = iob_len ( iobuf );
-	int rc;
 
 	/* Sanity check */
 	if ( ( sizeof ( *change_cipher ) != len ) ||
@@ -2082,14 +2506,9 @@ static int tls_new_change_cipher ( struct tls_connection *tls,
 	}
 	iob_pull ( iobuf, sizeof ( *change_cipher ) );
 
-	/* Change receive cipher spec */
-	if ( ( rc = tls_change_cipher ( tls, &tls->rx.cipherspec,
-					&tls->channel.rx ) ) != 0 ) {
-		DBGC ( tls, "TLS %p could not activate RX cipher: %s\n",
-		       tls, strerror ( rc ) );
-		return rc;
-	}
-	tls->rx.seq = ~( ( uint64_t ) 0 );
+	/* Schedule change to application traffic keys, if applicable */
+	if ( ! tls_version ( tls, TLS_VERSION_TLS_1_3 ) )
+		tls->rx.cipherspec.pending = &tls_application;
 
 	return 0;
 }
@@ -2184,14 +2603,14 @@ static int tls_new_hello_request ( struct tls_connection *tls,
  */
 static int tls_new_server_hello ( struct tls_connection *tls,
 				  const void *data, size_t len ) {
+	static const uint8_t downgrade_magic[7] = TLS_SERVER_DOWNGRADE_MAGIC;
 	struct tls_session *session = tls->session;
 	const struct {
 		uint16_t version;
-		struct tls_random random;
+		union tls_server_random random;
 		uint8_t session_id_len;
 		uint8_t session_id[0];
 	} __attribute__ (( packed )) *hello_a = data;
-	const uint8_t *session_id;
 	const struct {
 		uint16_t cipher_suite;
 		uint8_t compression_method;
@@ -2213,9 +2632,23 @@ static int tls_new_server_hello ( struct tls_connection *tls,
 	const struct {
 		uint8_t data[0];
 	} __attribute__ (( packed )) *ems = NULL;
+	const struct {
+		uint16_t version;
+	} __attribute__ (( packed )) *supver = NULL;
+	const struct {
+		uint16_t code;
+	} __attribute__ (( packed )) *key = NULL;
+	const struct {
+		uint16_t code;
+		uint16_t len;
+		uint8_t share[0];
+	} __attribute__ (( packed )) *keyval = NULL;
+	const uint8_t *session_id;
 	uint16_t version;
+	size_t session_id_len;
 	size_t exts_len;
 	size_t ext_len;
+	size_t verify_len;
 	size_t remaining;
 	int rc;
 
@@ -2224,15 +2657,17 @@ static int tls_new_server_hello ( struct tls_connection *tls,
 	     ( hello_a->session_id_len > ( len - sizeof ( *hello_a ) ) ) ||
 	     ( sizeof ( *hello_b ) > ( len - sizeof ( *hello_a ) -
 				       hello_a->session_id_len ) ) ) {
-		DBGC ( tls, "TLS %p received underlength Server Hello\n", tls );
+		DBGC ( tls, "TLS %p received underlength Server Hello\n",
+		       tls );
 		DBGC_HD ( tls, data, len );
 		return -EINVAL_HELLO;
 	}
 	session_id = hello_a->session_id;
-	hello_b = ( ( void * ) ( session_id + hello_a->session_id_len ) );
+	session_id_len = hello_a->session_id_len;
+	hello_b = ( ( void * ) ( session_id + session_id_len ) );
 
 	/* Parse extensions, if present */
-	remaining = ( len - sizeof ( *hello_a ) - hello_a->session_id_len -
+	remaining = ( len - sizeof ( *hello_a ) - session_id_len -
 		      sizeof ( *hello_b ) );
 	if ( remaining ) {
 
@@ -2280,12 +2715,43 @@ static int tls_new_server_hello ( struct tls_connection *tls,
 			case htons ( TLS_EXTENDED_MASTER_SECRET ) :
 				ems = ( ( void * ) ext->data );
 				break;
+			case htons ( TLS_SUPPORTED_VERSIONS ):
+				supver = ( ( void * ) ext->data );
+				if ( sizeof ( *supver ) > ext_len ) {
+					DBGC ( tls, "TLS %p received "
+					       "underlength supported "
+					       "version\n", tls );
+					DBGC_HD ( tls, data, len );
+					return -EINVAL_HELLO;
+				}
+				break;
+			case htons ( TLS_KEY_SHARE ):
+				key = ( ( void * ) ext->data );
+				if ( sizeof ( *key ) > ext_len ) {
+					DBGC ( tls, "TLS %p received "
+					       "underlength key share\n",
+					       tls );
+					DBGC_HD ( tls, data, len );
+					return -EINVAL_HELLO;
+				}
+				if ( sizeof ( *keyval ) > ext_len )
+					break;
+				keyval = ( ( void * ) key );
+				if ( ntohs ( keyval->len ) >
+				     ( ext_len - sizeof ( *keyval ) ) ) {
+					DBGC ( tls, "TLS %p received "
+					       "underlength key share\n",
+					       tls );
+					DBGC_HD ( tls, data, len );
+					return -EINVAL_HELLO;
+				}
+				break;
 			}
 		}
 	}
 
 	/* Check and store protocol version */
-	version = ntohs ( hello_a->version );
+	version = ntohs ( supver ? supver->version : hello_a->version );
 	if ( version < TLS_VERSION_MIN ) {
 		DBGC ( tls, "TLS %p does not support protocol version %d.%d\n",
 		       tls, ( version >> 8 ), ( version & 0xff ) );
@@ -2298,55 +2764,33 @@ static int tls_new_server_hello ( struct tls_connection *tls,
 		return -EPROTO_VERSION;
 	}
 	tls->version = version;
+	tls->legacy_version = version;
+	if ( tls->legacy_version > TLS_LEGACY_VERSION_MAX )
+		tls->legacy_version = TLS_LEGACY_VERSION_MAX;
 	DBGC ( tls, "TLS %p using protocol version %d.%d\n",
 	       tls, ( version >> 8 ), ( version & 0xff ) );
 
-	/* Select cipher suite */
-	if ( ( rc = tls_select_cipher ( tls, hello_b->cipher_suite ) ) != 0 )
-		return rc;
-
-	/* Add preceding Client Hello to handshake digest
-	 *
-	 * When the Client Hello was originally sent, the digest
-	 * algorithm selected by the server's choice of cipher suite
-	 * was not yet known.  This is the earliest point at which it
-	 * can be incorporated into the handshake transcript digest.
-	 */
-	if ( ( rc = tls_client_hello ( tls, tls_add_handshake ) ) != 0 )
-		return rc;
-
-	/* Handle extended master secret */
-	tls->extended_master_secret = ( !! ems );
-
-	/* Check session ID */
-	if ( hello_a->session_id_len &&
-	     ( hello_a->session_id_len == session->id.len ) &&
-	     ( memcmp ( session_id, session->id.data,
-			session->id.len ) == 0 ) ) {
-
-		/* Session ID match: resume session */
-		if ( ( rc = tls_resume ( tls ) ) != 0 )
-			return rc;
-
-	} else if ( hello_a->session_id_len &&
-		    ( hello_a->session_id_len <=
-		      sizeof ( tls->new_id.data ) ) ) {
-
-		/* Record new session ID */
-		tls->new_id.len = hello_a->session_id_len;
-		memcpy ( tls->new_id.data, session_id, tls->new_id.len );
-		DBGC ( tls, "TLS %p new session ID:\n", tls );
-		DBGC_HDA ( tls, 0, tls->new_id.data, tls->new_id.len );
+	/* Check for downgrade attacks */
+	if ( ( version < TLS_VERSION_MAX ) &&
+	     ( memcmp ( hello_a->random.downgrade.magic, downgrade_magic,
+			sizeof ( hello_a->random.downgrade.magic ) ) == 0 ) &&
+	     ( hello_a->random.downgrade.version <
+	       ( TLS_VERSION_MAX - TLS_VERSION_TLS_1_1 ) ) ) {
+		DBGC ( tls, "TLS %p detected downgrade attack:\n", tls );
+		DBGC_HDA ( tls, 0, &hello_a->random.downgrade,
+			   sizeof ( hello_a->random.downgrade ) );
+		return -EPERM_DOWNGRADE;
 	}
 
 	/* Handle secure renegotiation */
 	if ( tls->secure_renegotiation ) {
 
 		/* Secure renegotiation is expected; verify data */
+		verify_len = ( 2 * tls->suite->verify_len );
 		if ( ( reneg == NULL ) ||
-		     ( reneg->len != sizeof ( tls->verify ) ) ||
-		     ( memcmp ( reneg->data, &tls->verify,
-				sizeof ( tls->verify ) ) != 0 ) ) {
+		     ( reneg->len != verify_len ) ||
+		     ( memcmp ( reneg->data, tls->verify.dynamic,
+				verify_len ) != 0 ) ) {
 			DBGC ( tls, "TLS %p server failed secure "
 			       "renegotiation\n", tls );
 			return -EPERM_RENEG_VERIFY;
@@ -2361,6 +2805,66 @@ static int tls_new_server_hello ( struct tls_connection *tls,
 			return -EPERM_RENEG_VERIFY;
 		}
 		tls->secure_renegotiation = 1;
+	}
+
+	/* Select cipher suite */
+	if ( ( rc = tls_select_cipher ( tls, hello_b->cipher_suite ) ) != 0 )
+		return rc;
+
+	/* Handle extended master secret */
+	tls->extended_master_secret = ( !! ems );
+
+	/* Check session ID */
+	if ( session_id_len && ( session_id_len == session->id.len ) &&
+	     ( memcmp ( session_id, session->id.data, session_id_len ) == 0)){
+
+		/* Session ID match: resume session for TLSv1.2 or earlier */
+		if ( ( ! tls_version ( tls, TLS_VERSION_TLS_1_3 ) ) &&
+		     ( rc = tls_resume ( tls ) ) != 0 ) {
+			return rc;
+		}
+
+	} else {
+
+		/* Session ID echo mismatch: abort for TLSv1.3 or later */
+		if ( tls_version ( tls, TLS_VERSION_TLS_1_3 ) ) {
+			DBGC ( tls, "TLS %p session ID mismatch\n", tls );
+			DBGC_HDA ( tls, 0, session_id, session_id_len );
+			return -EPERM_SESSION_ID;
+		}
+
+		/* Record new session ID, if possible */
+		if ( session_id_len && ( session_id_len <=
+					 sizeof ( tls->new_id.data ) ) ) {
+			tls->new_id.len = session_id_len;
+			memcpy ( tls->new_id.data, session_id,
+				 session_id_len );
+			DBGC ( tls, "TLS %p new session ID:\n", tls );
+			DBGC_HDA ( tls, 0, session_id, session_id_len );
+		}
+	}
+
+	/* Select named group, if applicable */
+	if ( key ) {
+		tls->group = tls_find_named_group ( key->code );
+		if ( ! tls->group ) {
+			DBGC ( tls, "TLS %p unsupported named group %d\n",
+			       tls, ntohs ( key->code ) );
+			return -ENOTSUP_GROUP;
+		}
+	}
+
+	/* Agree shared key, if applicable */
+	if ( keyval &&
+	     ( ( rc = tls_key_agree ( tls, tls->group, keyval->share,
+				      ntohs ( keyval->len ) ) ) != 0 ) ) {
+		return rc;
+	}
+
+	/* Schedule change to handshake traffic keys, if applicable */
+	if ( tls_version ( tls, TLS_VERSION_TLS_1_3 ) ) {
+		tls->tx.cipherspec.pending = &tls_handshake;
+		tls->rx.cipherspec.pending = &tls_handshake;
 	}
 
 	return 0;
@@ -2382,6 +2886,13 @@ static int tls_new_session_ticket ( struct tls_connection *tls,
 		uint8_t ticket[0];
 	} __attribute__ (( packed )) *new_session_ticket = data;
 	size_t ticket_len;
+
+	/* Ignore as-yet unsupported session tickets */
+	if ( tls_version ( tls, TLS_VERSION_TLS_1_3 ) ) {
+		DBGC ( tls, "TLS %p ignoring unsupported New Session Ticket\n",
+		       tls );
+		return 0;
+	}
 
 	/* Parse header */
 	if ( sizeof ( *new_session_ticket ) > len ) {
@@ -2446,8 +2957,13 @@ static int tls_parse_chain ( struct tls_connection *tls,
 		const struct {
 			tls24_t length;
 			uint8_t data[0];
-		} __attribute__ (( packed )) *certificate = data;
+		} __attribute__ (( packed )) *certificate;
+		const struct {
+			uint16_t length;
+			uint8_t data[0];
+		} __attribute__ (( packed )) *extension;
 		size_t certificate_len;
+		size_t extension_len;
 		size_t record_len;
 
 		/* Parse header */
@@ -2455,14 +2971,16 @@ static int tls_parse_chain ( struct tls_connection *tls,
 			DBGC ( tls, "TLS %p underlength certificate:\n", tls );
 			DBGC_HDA ( tls, 0, data, remaining );
 			rc = -EINVAL_CERTIFICATE;
-			goto err_underlength;
+			goto err_invalid;
 		}
+		certificate = data;
 		certificate_len = tls_uint24 ( &certificate->length );
-		if ( certificate_len > ( remaining - sizeof ( *certificate ) )){
+		if ( certificate_len >
+		     ( remaining - sizeof ( *certificate ) ) ) {
 			DBGC ( tls, "TLS %p overlength certificate:\n", tls );
 			DBGC_HDA ( tls, 0, data, remaining );
 			rc = -EINVAL_CERTIFICATE;
-			goto err_overlength;
+			goto err_invalid;
 		}
 		record_len = ( sizeof ( *certificate ) + certificate_len );
 
@@ -2470,25 +2988,48 @@ static int tls_parse_chain ( struct tls_connection *tls,
 		if ( ( rc = x509_append_raw ( tls->server.chain,
 					      certificate->data,
 					      certificate_len ) ) != 0 ) {
-			DBGC ( tls, "TLS %p could not append certificate: %s\n",
-			       tls, strerror ( rc ) );
+			DBGC ( tls, "TLS %p could not append certificate: "
+			       "%s\n", tls, strerror ( rc ) );
 			DBGC_HDA ( tls, 0, data, remaining );
-			goto err_parse;
+			goto err_invalid;
 		}
 		cert = x509_last ( tls->server.chain );
 		DBGC ( tls, "TLS %p found certificate %s\n",
 		       tls, x509_name ( cert ) );
 
-		/* Move to next certificate in list */
+		/* Move to next entry in list */
+		data += record_len;
+		remaining -= record_len;
+
+		/* Skip extensions, if not applicable */
+		if ( ! tls_version ( tls, TLS_VERSION_TLS_1_3 ) )
+			continue;
+
+		/* Parse header */
+		if ( sizeof ( *extension ) > remaining ) {
+			DBGC ( tls, "TLS %p underlength extension:\n", tls );
+			DBGC_HDA ( tls, 0, data, remaining );
+			rc = -EINVAL_CERTIFICATE;
+			goto err_invalid;
+		}
+		extension = data;
+		extension_len = ntohs ( extension->length );
+		if ( extension_len > ( remaining - sizeof ( *extension ) ) ) {
+			DBGC ( tls, "TLS %p overlength extension:\n", tls );
+			DBGC_HDA ( tls, 0, data, remaining );
+			rc = -EINVAL_CERTIFICATE;
+			goto err_invalid;
+		}
+		record_len = ( sizeof ( *extension ) + extension_len );
+
+		/* Move to next entry in list */
 		data += record_len;
 		remaining -= record_len;
 	}
 
 	return 0;
 
- err_parse:
- err_overlength:
- err_underlength:
+ err_invalid:
 	x509_chain_put ( tls->server.chain );
 	tls->server.chain = NULL;
  err_alloc_chain:
@@ -2506,30 +3047,137 @@ static int tls_parse_chain ( struct tls_connection *tls,
 static int tls_new_certificate ( struct tls_connection *tls,
 				 const void *data, size_t len ) {
 	const struct {
+		uint8_t length;
+		uint8_t data[0];
+	} __attribute__ (( packed )) *context;
+	const struct {
 		tls24_t length;
 		uint8_t certificates[0];
-	} __attribute__ (( packed )) *certificate = data;
+	} __attribute__ (( packed )) *certificate;
+	size_t context_len;
 	size_t certificates_len;
 	int rc;
 
-	/* Parse header */
+	/* Strip context, if present */
+	if ( tls_version ( tls, TLS_VERSION_TLS_1_3 ) ) {
+		if ( sizeof ( *context ) > len ) {
+			DBGC ( tls, "TLS %p received underlength "
+			       "Certificate context\n", tls );
+			DBGC_HDA ( tls, 0, data, len );
+			return -EINVAL_CERTIFICATES;
+		}
+		context = data;
+		context_len = context->length;
+		if ( context_len > ( len - sizeof ( *context ) ) ) {
+			DBGC ( tls, "TLS %p received overlength "
+			       "Certificate context\n", tls );
+			DBGC_HDA ( tls, 0, data, len );
+			return -EINVAL_CERTIFICATES;
+		}
+		data += ( sizeof ( *context ) + context_len );
+		len -= ( sizeof ( *context ) + context_len );
+	}
+
+	/* Parse certificates */
 	if ( sizeof ( *certificate ) > len ) {
-		DBGC ( tls, "TLS %p received underlength Server Certificate\n",
-		       tls );
-		DBGC_HD ( tls, data, len );
+		DBGC ( tls, "TLS %p received underlength Certificate\n", tls );
+		DBGC_HDA ( tls, 0, data, len );
 		return -EINVAL_CERTIFICATES;
 	}
+	certificate = data;
 	certificates_len = tls_uint24 ( &certificate->length );
 	if ( certificates_len > ( len - sizeof ( *certificate ) ) ) {
-		DBGC ( tls, "TLS %p received overlength Server Certificate\n",
-		       tls );
-		DBGC_HD ( tls, data, len );
+		DBGC ( tls, "TLS %p received overlength Certificate\n", tls );
+		DBGC_HDA ( tls, 0, data, len );
 		return -EINVAL_CERTIFICATES;
 	}
 
 	/* Parse certificate chain */
 	if ( ( rc = tls_parse_chain ( tls, certificate->certificates,
 				      certificates_len ) ) != 0 )
+		return rc;
+
+	return 0;
+}
+
+/**
+ * Verify a signature record
+ *
+ * @v tls		TLS connection
+ * @v data		Signature record
+ * @v len		Length of signature record
+ * @v params		Additional parameters
+ * @v params_len	Length of additional parameters
+ * @ret rc		Return status code
+ */
+static int tls_verify_signature ( struct tls_connection *tls,
+				  const void *data, size_t len,
+				  const void *params, size_t params_len ) {
+	struct tls_cipher_suite *suite = tls->suite;
+	struct tls_signature_hash_algorithm *sig_hash;
+	struct tls_signature_hash_algorithm tmp;
+	int use_sig_hash = tls_version ( tls, TLS_VERSION_TLS_1_2 );
+	const struct {
+		uint16_t sig_hash[use_sig_hash];
+		uint16_t signature_len;
+		uint8_t signature[0];
+	} __attribute__ (( packed )) *sig;
+	size_t signature_len;
+	int rc;
+
+	/* Parse signature */
+	if ( sizeof ( *sig ) > len ) {
+		DBGC ( tls, "TLS %p received underlength signature\n", tls );
+		DBGC_HDA ( tls, 0, data, len );
+		return -EINVAL_SIGNATURE;
+	}
+	sig = data;
+	signature_len = ntohs ( sig->signature_len );
+	if ( signature_len > ( len - sizeof ( *sig ) ) ) {
+		DBGC ( tls, "TLS %p received overlength signature\n", tls );
+		DBGC_HDA ( tls, 0, data, len );
+		return -EINVAL_SIGNATURE;
+	}
+
+	/* Identify signature and hash algorithm */
+	if ( use_sig_hash ) {
+		sig_hash = tls_find_signature_hash ( sig->sig_hash[0] );
+		if ( ! sig_hash ) {
+			DBGC ( tls, "TLS %p unsupported signature hash "
+			       "%#04x\n", tls, sig->sig_hash[0] );
+			return -ENOTSUP_SIG_HASH;
+		}
+	} else {
+		sig_hash = &tmp;
+		memset ( sig_hash, 0, sizeof ( *sig_hash ) );
+		sig_hash->pubkey = suite->pubkey;
+		sig_hash->digest = &md5_sha1_algorithm;
+	}
+
+	/* Verify signature */
+	if ( ( rc = tls_key_verify ( tls, sig_hash, sig->signature,
+				     signature_len, params,
+				     params_len ) ) != 0 ) {
+		return rc;
+	}
+
+	return 0;
+}
+
+/**
+ * Receive new Certificate Verify handshake record
+ *
+ * @v tls		TLS connection
+ * @v data		Plaintext handshake record
+ * @v len		Length of plaintext handshake record
+ * @ret rc		Return status code
+ */
+static int tls_new_certificate_verify ( struct tls_connection *tls,
+					const void *data, size_t len ) {
+	int rc;
+
+	/* Verify signature */
+	if ( ( rc = tls_verify_signature ( tls, data, len, NULL, 0 ) ) != 0 )
 		return rc;
 
 	return 0;
@@ -2545,115 +3193,32 @@ static int tls_new_certificate ( struct tls_connection *tls,
  */
 static int tls_new_server_key_exchange ( struct tls_connection *tls,
 					 const void *data, size_t len ) {
-	struct tls_cipherspec *cipherspec = &tls->tx.cipherspec.pending;
-	struct tls_cipher_suite *suite = cipherspec->suite;
+	struct tls_cipher_suite *suite = tls->suite;
 	struct tls_key_exchange_parameters params;
-	struct tls_signature_hash_algorithm *sig_hash;
-	struct x509_certificate *cert;
-	struct pubkey_algorithm *pubkey;
-	struct digest_algorithm *digest;
-	int use_sig_hash = tls_version ( tls, TLS_VERSION_TLS_1_2 );
-	const struct {
-		uint16_t sig_hash[use_sig_hash];
-		uint16_t signature_len;
-		uint8_t signature[0];
-	} __attribute__ (( packed )) *sig;
-	struct asn1_cursor signature;
-	size_t remaining;
 	int rc;
 
-	/* Identify server certificate */
-	cert = x509_first ( tls->server.chain );
-	if ( ! cert ) {
-		DBGC ( tls, "TLS %p has no server certificate\n", tls );
-		return -ENOENT_CERT;
-	}
-
 	/* Parse parameters */
-	if ( ! suite->exchange->parse ) {
-		DBGC ( tls, "TLS %p received unexpected ServerKeyExchange:\n",
-		       tls );
-		DBGC_HDA ( tls, 0, data, len );
-		return -EINVAL_KEY_EXCHANGE;
-	}
 	if ( ( rc = suite->exchange->parse ( tls, data, len, &params ) ) != 0)
 		return rc;
 	DBGC ( tls, "TLS %p using named group %s-%s\n",
-	       tls, suite->exchange->name, params.exchange->name );
-
-	/* Signature follows parameters */
+	       tls, suite->exchange->name, params.group->exchange->name );
 	assert ( params.len <= len );
-	sig = ( data + params.len );
-	remaining = ( len - params.len );
-
-	/* Parse signature from ServerKeyExchange */
-	if ( ( sizeof ( *sig ) > remaining ) ||
-	     ( ntohs ( sig->signature_len ) > ( remaining -
-						sizeof ( *sig ) ) ) ) {
-		DBGC ( tls, "TLS %p received underlength ServerKeyExchange\n",
-		       tls );
-		DBGC_HDA ( tls, 0, data, len );
-		return -EINVAL_KEY_EXCHANGE;
-	}
-	signature.data = sig->signature;
-	signature.len = ntohs ( sig->signature_len );
-
-	/* Identify signature and hash algorithm */
-	if ( use_sig_hash ) {
-		sig_hash = tls_find_signature_hash ( sig->sig_hash[0] );
-		if ( ! sig_hash ) {
-			DBGC ( tls, "TLS %p unsupported signature hash "
-			       "%#04x\n", tls, sig->sig_hash[0] );
-			return -ENOTSUP_SIG_HASH;
-		}
-		pubkey = sig_hash->pubkey;
-		digest = sig_hash->digest;
-		DBGC ( tls, "TLS %p using signature hash %s-%s\n",
-		       tls, pubkey->name, digest->name );
-		if ( sig_hash->algorithm !=
-		     cert->subject.public_key.algorithm ) {
-			DBGC ( tls, "TLS %p cannot use %s public key\n", tls,
-			       cert->subject.public_key.algorithm->name );
-			return -EPERM_KEY_EXCHANGE;
-		}
-	} else {
-		pubkey = cipherspec->suite->pubkey;
-		digest = &md5_sha1_algorithm;
-	}
 
 	/* Generate pre-master secret */
-	if ( ( rc = tls_key_agree ( tls, params.exchange, params.partner,
+	if ( ( rc = tls_key_agree ( tls, params.group, params.partner,
 				    params.partner_len ) ) != 0 ) {
 		return rc;
 	}
 
-	/* Verify signature */
-	{
-		uint8_t tbshash[digest->digestsize];
-
-		/* Calculate digest */
-		if ( ( rc = tlskey_tbshash ( &tls->key, &tls_server,
-					     digest, data, params.len,
-					     tbshash ) ) != 0 ) {
-			DBGC ( tls, "TLS %p could not generate "
-			       "ServerKeyExchange digest: %s\n",
-			       tls, strerror ( rc ) );
-			return rc;
-		}
-
-		/* Verify signature to bind pre-master secret */
-		if ( ( rc = channel_bind_verify ( &tls->channel, cert,
-						  pubkey, digest, tbshash,
-						  &signature ) ) != 0 ) {
-			DBGC ( tls, "TLS %p ServerKeyExchange failed "
-			       "verification: %s\n", tls, strerror ( rc ) );
-			DBGC_HDA ( tls, 0, data, len );
-			return rc;
-		}
+	/* Verify signature (immediately follows parameters) */
+	if ( ( rc = tls_verify_signature ( tls, ( data + params.len ),
+					   ( len - params.len ),
+					   data, params.len ) ) != 0 ) {
+		return rc;
 	}
 
-	/* Record key exchange algorithm for sending ClientKeyExchange */
-	tls->exchange = params.exchange;
+	/* Record named group */
+	tls->group = params.group;
 
 	return 0;
 }
@@ -2733,7 +3298,7 @@ static int tls_new_server_hello_done ( struct tls_connection *tls,
 	} __attribute__ (( packed )) *hello_done = data;
 	int rc;
 
-	/* Sanity check */
+	/* Sanity checks */
 	if ( sizeof ( *hello_done ) != len ) {
 		DBGC ( tls, "TLS %p received overlength Server Hello Done\n",
 		       tls );
@@ -2741,15 +3306,9 @@ static int tls_new_server_hello_done ( struct tls_connection *tls,
 		return -EINVAL_HELLO_DONE;
 	}
 
-	/* Begin certificate validation */
-	if ( ( rc = create_validator ( &tls->server.validator,
-				       tls->server.chain,
-				       tls->server.root ) ) != 0 ) {
-		DBGC ( tls, "TLS %p could not start certificate validation: "
-		       "%s\n", tls, strerror ( rc ) );
+	/* End of certificate-based handshake: start validation */
+	if ( ( rc = tls_validator_start ( tls ) ) != 0 )
 		return rc;
-	}
-	pending_get ( &tls->server.validation );
 
 	return 0;
 }
@@ -2776,19 +3335,40 @@ static int tls_new_finished ( struct tls_connection *tls,
 	/* Mark server as finished */
 	pending_put ( &tls->server.negotiation );
 
-	/* If client has finished, then establish the secure channel */
-	if ( ( ! is_pending ( &tls->client.negotiation ) ) &&
-	     ( ( rc = tls_establish ( tls ) ) != 0 ) ) {
-		return rc;
+	/* Handle key schedule */
+	if ( tls_version ( tls, TLS_VERSION_TLS_1_3 ) ) {
+
+		/* Generate master secret */
+		if ( ( rc = tlskey_master ( &tls->key, 1 ) ) != 0 ) {
+			DBGC ( tls, "TLS %p could not generate master secret: "
+			       "%s\n", tls, strerror ( rc ) );
+			return rc;
+		}
+
+		/* Schedule change to application traffic keys */
+		tls->rx.cipherspec.pending = &tls_application;
 	}
 
-	/* If we are resuming a session (i.e. if the server Finished
-	 * arrives before the client Finished is sent), then schedule
-	 * transmission of Change Cipher and Finished.
-	 */
-	if ( is_pending ( &tls->client.negotiation ) ) {
-		tls->tx.pending |= ( TLS_TX_CHANGE_CIPHER | TLS_TX_FINISHED );
+	/* Handle state transitions */
+	if ( tls_version ( tls, TLS_VERSION_TLS_1_3 ) && tls->server.chain ) {
+
+		/* End of certificate-based handshake: start validation */
+		if ( ( rc = tls_validator_start ( tls ) ) != 0 )
+			return rc;
+
+	} else if ( is_pending ( &tls->client.negotiation ) ) {
+
+		/* Resuming session: trigger sending Finished */
+		if ( ! tls_version ( tls, TLS_VERSION_TLS_1_3 ) )
+			tls->tx.pending |= TLS_TX_CHANGE_CIPHER;
+		tls->tx.pending |= TLS_TX_FINISHED;
 		tls_tx_resume ( tls );
+
+	} else {
+
+		/* Client has already finished: establish session */
+		if ( ( rc = tls_establish ( tls ) ) != 0 )
+			return rc;
 	}
 
 	return 0;
@@ -2800,6 +3380,27 @@ static int tls_new_finished ( struct tls_connection *tls,
  * @v tls		TLS connection
  * @v iobuf		I/O buffer
  * @ret rc		Return status code
+ *
+ * Following the general robustness principle, we accept handshake
+ * records in any order of arrival and rely on the secure channel
+ * abstraction to determine whether or not the resulting sequence of
+ * operations is sufficient to establish the channel.
+ *
+ * Most non-standard handshake record sequences would not manage to
+ * successfully establish the channel.  For example: a premature
+ * Finished that attempts to skip the ServerKeyExchange would fail
+ * because the channel will reject an attempt to confirm an unbound
+ * peer identity.
+ *
+ * It would be possible for an inventive server to construct
+ * non-standard sequences of handshake records that do successfully
+ * establish the secure channel.  For example: a server could choose
+ * to send a second ServerKeyExchange record with a second valid
+ * signature (over the updated transcript digest that includes the
+ * first ServerKeyExchange).  This would be non-standard and rather
+ * pointless, but would be accepted for the purpose of establishing
+ * the secure channel since it does in fact provide the required
+ * security properties.
  */
 static int tls_new_handshake ( struct tls_connection *tls,
 			       struct io_buffer *iobuf ) {
@@ -2815,6 +3416,12 @@ static int tls_new_handshake ( struct tls_connection *tls,
 		const void *payload;
 		size_t payload_len;
 		size_t record_len;
+
+		/* Fail if receive cipher has changed mid-record */
+		if ( tls->rx.cipherspec.pending ) {
+			DBGC ( tls, "TLS %p cipher change mid-record\n", tls );
+			return -EPROTO_CIPHER_CHANGE;
+		}
 
 		/* Parse header */
 		if ( sizeof ( *handshake ) > remaining ) {
@@ -2844,6 +3451,10 @@ static int tls_new_handshake ( struct tls_connection *tls,
 			break;
 		case TLS_CERTIFICATE:
 			rc = tls_new_certificate ( tls, payload, payload_len );
+			break;
+		case TLS_CERTIFICATE_VERIFY:
+			rc = tls_new_certificate_verify ( tls, payload,
+							  payload_len );
 			break;
 		case TLS_SERVER_KEY_EXCHANGE:
 			rc = tls_new_server_key_exchange ( tls, payload,
@@ -3105,18 +3716,22 @@ static void tls_hmac_list ( struct tls_cipherspec *cipherspec,
  * @ret reserve		Maximum additional length to reserve
  */
 static size_t tls_iob_reserved ( struct tls_connection *tls, size_t len ) {
-	struct tls_cipherspec *cipherspec = &tls->tx.cipherspec.active;
+	struct tls_cipherspec *cipherspec = &tls->tx.cipherspec;
 	struct tls_cipher_suite *suite = cipherspec->suite;
-	struct cipher_algorithm *cipher = suite->cipher;
+	struct secure_pipe *pipe = &tls->channel.tx;
+	struct cipher_algorithm *cipher = pipe->cipher;
 	struct tls_header *tlshdr;
+	uint8_t *inner_type;
 	unsigned int count;
 	size_t each;
 
 	/* Calculate number of records (allowing for zero-length records) */
-	count = ( len ? ( ( len + TLS_TX_BUFSIZE - 1 ) / TLS_TX_BUFSIZE ) : 1 );
+	count = ( len ?
+		  ( ( len + TLS_TX_BUFSIZE - 1 ) / TLS_TX_BUFSIZE ) : 1 );
 
 	/* Calculate maximum additional length per record */
-	each = ( sizeof ( *tlshdr ) + suite->record_iv_len + suite->mac_len +
+	each = ( sizeof ( *tlshdr ) + suite->record_iv_len +
+		 sizeof ( *inner_type ) + suite->mac_len +
 		 ( is_block_cipher ( cipher ) ? cipher->blocksize : 0 ) +
 		 cipher->authsize );
 
@@ -3160,14 +3775,14 @@ static struct io_buffer * tls_alloc_iob ( struct tls_connection *tls,
  */
 static int tls_send_record ( struct tls_connection *tls, unsigned int type,
 			     struct io_buffer *iobuf ) {
-	struct tls_cipherspec *cipherspec = &tls->tx.cipherspec.active;
+	struct tls_cipherspec *cipherspec = &tls->tx.cipherspec;
 	struct tls_cipher_suite *suite = cipherspec->suite;
-	struct cipher_algorithm *cipher = suite->cipher;
 	struct digest_algorithm *digest = suite->digest;
 	struct secure_pipe *pipe = &tls->channel.tx;
+	struct cipher_algorithm *cipher = pipe->cipher;
 	struct {
 		uint8_t fixed[suite->fixed_iv_len];
-		uint8_t rec[suite->record_iv_len];
+		uint8_t record[suite->record_iv_len];
 	} __attribute__ (( packed )) iv;
 	struct tls_auth_header authhdr;
 	struct tls_header *tlshdr;
@@ -3175,6 +3790,7 @@ static int tls_send_record ( struct tls_connection *tls, unsigned int type,
 	const void *plaintext;
 	const void *encrypt;
 	void *ciphertext;
+	uint8_t inner_type;
 	size_t record_len;
 	size_t encrypt_len;
 	size_t pad_len;
@@ -3182,7 +3798,7 @@ static int tls_send_record ( struct tls_connection *tls, unsigned int type,
 	int rc;
 
 	/* Sanity check */
-	assert ( pipe->cipher == cipher );
+	assert ( cipher == suite->cipher );
 
 	/* Record plaintext pointer and length */
 	plaintext = iobuf->data;
@@ -3196,6 +3812,14 @@ static int tls_send_record ( struct tls_connection *tls, unsigned int type,
 	iob_push ( iobuf, tls_iob_reserved ( tls, len ) );
 	iob_unput ( iobuf, iob_len ( iobuf ) );
 
+	/* Determine inner type, if any */
+	if ( tls_has_inner ( tls, cipher ) ) {
+		inner_type = type;
+		type = TLS_TYPE_DATA;
+	} else {
+		inner_type = 0;
+	}
+
 	/* Construct records */
 	do {
 		/* Limit length of this record (may be zero) */
@@ -3204,16 +3828,24 @@ static int tls_send_record ( struct tls_connection *tls, unsigned int type,
 			record_len = TLS_TX_BUFSIZE;
 
 		/* Construct authentication header */
-		authhdr.seq = cpu_to_be64 ( tls->tx.seq );
+		authhdr.seq = cpu_to_be64 ( cipherspec->seq++ );
 		authhdr.header.type = type;
-		authhdr.header.version = htons ( tls->version );
+		authhdr.header.version = htons ( tls->legacy_version );
 		authhdr.header.length = htons ( record_len );
 
 		/* Construct and set initialisation vector */
 		memcpy ( iv.fixed, cipherspec->fixed_iv, sizeof ( iv.fixed ) );
-		channel_ephemeral ( &tls->channel, &authhdr,
-				    sizeof ( authhdr ), iv.rec,
-				    sizeof ( iv.rec ) );
+		if ( suite->flags & TLS_CIPHER_FL_SEQUENTIAL_IV ) {
+			memset ( iv.record, 0, sizeof ( iv.record ) );
+			assert ( sizeof ( iv ) >= sizeof ( authhdr.seq ) );
+			tls_xor ( ( ( ( void * ) &iv ) + sizeof ( iv )
+				    - sizeof ( authhdr.seq ) ),
+				  &authhdr.seq, sizeof ( authhdr.seq ) );
+		} else {
+			channel_ephemeral ( &tls->channel, &authhdr,
+					    sizeof ( authhdr ), iv.record,
+					    sizeof ( iv.record ) );
+		}
 		if ( ( rc = cipher_setiv ( cipher, pipe->ctx, &iv,
 					   sizeof ( iv ) ) ) != 0 ) {
 			DBGC ( tls, "TLS %p could not set TX IV: %s\n",
@@ -3221,18 +3853,11 @@ static int tls_send_record ( struct tls_connection *tls, unsigned int type,
 			goto err_setiv;
 		}
 
-		/* Process authentication data */
-		if ( suite->mac_len ) {
-			tls_hmac ( cipherspec, &authhdr, plaintext,
-				   record_len, mac );
-		}
-		if ( is_auth_cipher ( cipher ) ) {
-			cipher_encrypt ( cipher, pipe->ctx, &authhdr, NULL,
-					 sizeof ( authhdr ) );
-		}
-
 		/* Calculate encryption length */
-		encrypt_len = ( record_len + suite->mac_len );
+		encrypt_len = record_len;
+		if ( inner_type )
+			encrypt_len += sizeof ( inner_type );
+		encrypt_len += suite->mac_len;
 		if ( is_block_cipher ( cipher ) ) {
 			pad_len = ( ( ( cipher->blocksize - 1 ) &
 				      -( encrypt_len + 1 ) ) + 1 );
@@ -3244,13 +3869,30 @@ static int tls_send_record ( struct tls_connection *tls, unsigned int type,
 		/* Add record header */
 		tlshdr = iob_put ( iobuf, sizeof ( *tlshdr ) );
 		tlshdr->type = type;
-		tlshdr->version = htons ( tls->version );
-		tlshdr->length = htons ( sizeof ( iv.rec ) + encrypt_len +
+		tlshdr->version = htons ( tls->legacy_version );
+		tlshdr->length = htons ( sizeof ( iv.record ) + encrypt_len +
 					 cipher->authsize );
 
+		/* Process authentication data */
+		if ( suite->mac_len ) {
+			tls_hmac ( cipherspec, &authhdr, plaintext,
+				   record_len, mac );
+		}
+		if ( is_auth_cipher ( cipher ) ) {
+			if ( tls_version ( tls, TLS_VERSION_TLS_1_3 ) ) {
+				authhdr.header.length = tlshdr->length;
+				cipher_encrypt ( cipher, pipe->ctx,
+						 &authhdr.header, NULL,
+						 sizeof ( authhdr.header ) );
+			} else {
+				cipher_encrypt ( cipher, pipe->ctx, &authhdr,
+						 NULL, sizeof ( authhdr ) );
+			}
+		}
+
 		/* Add record initialisation vector, if applicable */
-		memcpy ( iob_put ( iobuf, sizeof ( iv.rec ) ), iv.rec,
-			 sizeof ( iv.rec ) );
+		memcpy ( iob_put ( iobuf, sizeof ( iv.record ) ), iv.record,
+			 sizeof ( iv.record ) );
 
 		/* Copy plaintext data if necessary */
 		ciphertext = iob_put ( iobuf, record_len );
@@ -3262,12 +3904,19 @@ static int tls_send_record ( struct tls_connection *tls, unsigned int type,
 			encrypt = plaintext;
 		}
 
+		/* Add inner type, if applicable */
+		if ( inner_type ) {
+			memcpy ( iob_put ( iobuf, sizeof ( inner_type ) ),
+				 &inner_type, sizeof ( inner_type ) );
+		}
+
 		/* Add MAC, if applicable */
 		memcpy ( iob_put ( iobuf, suite->mac_len ), mac,
 			 suite->mac_len );
 
 		/* Add padding, if applicable */
-		memset ( iob_put ( iobuf, pad_len ), ( pad_len - 1 ), pad_len );
+		memset ( iob_put ( iobuf, pad_len ), ( pad_len - 1 ),
+			 pad_len );
 
 		/* Encrypt data and append authentication tag */
 		DBGC2 ( tls, "Sending plaintext data:\n" );
@@ -3278,7 +3927,6 @@ static int tls_send_record ( struct tls_connection *tls, unsigned int type,
 			      iob_put ( iobuf, cipher->authsize ) );
 
 		/* Move to next record */
-		tls->tx.seq += 1;
 		plaintext += record_len;
 		len -= record_len;
 
@@ -3364,6 +4012,47 @@ static int tls_verify_padding ( struct tls_connection *tls,
 }
 
 /**
+ * Extract inner plaintext
+ *
+ * @v tls		TLS connection
+ * @v type		Record type
+ * @v rx_data		List of received data buffers
+ * @ret type		Inner plaintext record type, or negative error
+ */
+static int tls_extract_inner ( struct tls_connection *tls, int type,
+			       struct list_head *rx_data ) {
+	struct io_buffer *iobuf;
+	const uint8_t *data;
+	size_t len;
+
+	/* Check outer record type */
+	if ( type != TLS_TYPE_DATA ) {
+		DBGC ( tls, "TLS %p invalid outer type %d\n", tls, type );
+		return -EINVAL_INNER;
+	}
+
+	/* Strip trailing zero padding and obtain inner type */
+	type = 0;
+	list_for_each_entry_reverse ( iobuf, rx_data, list ) {
+		len = iob_len ( iobuf );
+		data = iobuf->data;
+		while ( len && ( ! type ) )
+			type = data[--len];
+		iob_unput ( iobuf, ( iob_len ( iobuf ) - len ) );
+		if ( type )
+			break;
+	}
+
+	/* Fail if no inner type was detected */
+	if ( ! type ) {
+		DBGC ( tls, "TLS %p missing inner type\n", tls );
+		return -EINVAL_INNER;
+	}
+
+	return type;
+}
+
+/**
  * Receive new ciphertext record
  *
  * @v tls		TLS connection
@@ -3374,11 +4063,12 @@ static int tls_verify_padding ( struct tls_connection *tls,
 static int tls_new_ciphertext ( struct tls_connection *tls,
 				struct tls_header *tlshdr,
 				struct list_head *rx_data ) {
-	struct tls_cipherspec *cipherspec = &tls->rx.cipherspec.active;
+	struct tls_cipherspec *cipherspec = &tls->rx.cipherspec;
 	struct tls_cipher_suite *suite = cipherspec->suite;
-	struct cipher_algorithm *cipher = suite->cipher;
 	struct digest_algorithm *digest = suite->digest;
 	struct secure_pipe *pipe = &tls->channel.rx;
+	struct cipher_algorithm *cipher = pipe->cipher;
+	int type = tlshdr->type;
 	size_t len = ntohs ( tlshdr->length );
 	struct {
 		uint8_t fixed[suite->fixed_iv_len];
@@ -3397,12 +4087,35 @@ static int tls_new_ciphertext ( struct tls_connection *tls,
 	int rc;
 
 	/* Sanity check */
-	assert ( pipe->cipher == cipher );
+	assert ( cipher == suite->cipher );
+
+	/* Handle TLS version 1.3 Change Cipher records */
+	if ( tls_version ( tls, TLS_VERSION_TLS_1_3 ) &&
+	     ( type == TLS_TYPE_CHANGE_CIPHER ) ) {
+		/* TLS version 1.3 allows unencrypted Change Cipher
+		 * records to be sent after switching to use the
+		 * handshake traffic keys.  This is an ugly protocol
+		 * hack to work around badly implemented firewalls of
+		 * the kind beloved by large organisations.
+		 *
+		 * Process these as plaintext records.  Change Cipher
+		 * records are ignored for TLS version 1.3, so this is
+		 * just the most convenient way to discard the
+		 * records.
+		 */
+		return tls_new_record ( tls, type, rx_data );
+	}
 
 	/* Locate first and last data buffers */
 	assert ( ! list_empty ( rx_data ) );
 	first = list_first_entry ( rx_data, struct io_buffer, list );
 	last = list_last_entry ( rx_data, struct io_buffer, list );
+
+	/* Construct authentication data */
+	authhdr.seq = cpu_to_be64 ( cipherspec->seq++ );
+	authhdr.header.type = tlshdr->type;
+	authhdr.header.version = tlshdr->version;
+	authhdr.header.length = htons ( len );
 
 	/* Extract initialisation vector */
 	if ( iob_len ( first ) < sizeof ( iv.record ) ) {
@@ -3411,6 +4124,13 @@ static int tls_new_ciphertext ( struct tls_connection *tls,
 		return -EINVAL_IV;
 	}
 	memcpy ( iv.fixed, cipherspec->fixed_iv, sizeof ( iv.fixed ) );
+	if ( suite->flags & TLS_CIPHER_FL_SEQUENTIAL_IV ) {
+		memset ( iv.record, 0, sizeof ( iv.record ) );
+		assert ( sizeof ( iv ) >= sizeof ( authhdr.seq ) );
+		tls_xor ( ( ( ( void * ) &iv ) + sizeof ( iv ) -
+			    sizeof ( authhdr.seq ) ), &authhdr.seq,
+			  sizeof ( authhdr.seq ) );
+	}
 	memcpy ( iv.record, first->data, sizeof ( iv.record ) );
 	iob_pull ( first, sizeof ( iv.record ) );
 	len -= sizeof ( iv.record );
@@ -3426,12 +4146,6 @@ static int tls_new_ciphertext ( struct tls_connection *tls,
 	len -= cipher->authsize;
 	auth = last->tail;
 
-	/* Construct authentication data */
-	authhdr.seq = cpu_to_be64 ( tls->rx.seq );
-	authhdr.header.type = tlshdr->type;
-	authhdr.header.version = tlshdr->version;
-	authhdr.header.length = htons ( len );
-
 	/* Set initialisation vector */
 	if ( ( rc = cipher_setiv ( cipher, pipe->ctx, &iv,
 				   sizeof ( iv ) ) ) != 0 ) {
@@ -3442,8 +4156,14 @@ static int tls_new_ciphertext ( struct tls_connection *tls,
 
 	/* Process authentication data, if applicable */
 	if ( is_auth_cipher ( cipher ) ) {
-		cipher_decrypt ( cipher, pipe->ctx, &authhdr,
-				 NULL, sizeof ( authhdr ) );
+		if ( tls_version ( tls, TLS_VERSION_TLS_1_3 ) ) {
+			cipher_decrypt ( cipher, pipe->ctx, &authhdr.header,
+					 NULL, sizeof ( authhdr.header ) );
+		} else {
+			authhdr.header.length = htons ( len );
+			cipher_decrypt ( cipher, pipe->ctx, &authhdr,
+					 NULL, sizeof ( authhdr ) );
+		}
 	}
 
 	/* Decrypt the received data */
@@ -3506,8 +4226,21 @@ static int tls_new_ciphertext ( struct tls_connection *tls,
 		return -EINVAL_MAC;
 	}
 
+	/* Extract inner plaintext, if applicable */
+	if ( ( tls_has_inner ( tls, cipher ) ) &&
+	     ( ( type = tls_extract_inner ( tls, type, rx_data ) ) < 0 ) ) {
+		rc = type;
+		return rc;
+	}
+
 	/* Process plaintext record */
-	if ( ( rc = tls_new_record ( tls, tlshdr->type, rx_data ) ) != 0 )
+	if ( ( rc = tls_new_record ( tls, type, rx_data ) ) != 0 )
+		return rc;
+
+	/* Handle any pending traffic phase changes */
+	if ( ( rc = tls_pending_cipher ( tls, &tls->tx.cipherspec ) ) != 0 )
+		return rc;
+	if ( ( rc = tls_pending_cipher ( tls, &tls->rx.cipherspec ) ) != 0 )
 		return rc;
 
 	return 0;
@@ -3612,8 +4345,9 @@ static struct interface_descriptor tls_plainstream_desc =
  * @ret rc		Returned status code
  */
 static int tls_newdata_process_header ( struct tls_connection *tls ) {
-	struct tls_cipherspec *cipherspec = &tls->rx.cipherspec.active;
-	struct cipher_algorithm *cipher = cipherspec->suite->cipher;
+	struct tls_cipherspec *cipherspec = &tls->rx.cipherspec;
+	struct secure_pipe *pipe = &tls->channel.rx;
+	struct cipher_algorithm *cipher = pipe->cipher;
 	size_t iv_len = cipherspec->suite->record_iv_len;
 	size_t data_len = ntohs ( tls->rx.header.length );
 	size_t remaining = data_len;
@@ -3714,9 +4448,6 @@ static int tls_newdata_process_data ( struct tls_connection *tls ) {
 	if ( ( rc = tls_new_ciphertext ( tls, &tls->rx.header,
 					 &tls->rx.data ) ) != 0 )
 		return rc;
-
-	/* Increment RX sequence number */
-	tls->rx.seq += 1;
 
 	/* Return to header state */
 	assert ( list_empty ( &tls->rx.data ) );
@@ -3823,6 +4554,34 @@ static struct interface_descriptor tls_cipherstream_desc =
  */
 
 /**
+ * Start certificate validation
+ *
+ * @v tls		TLS connection
+ * @ret rc		Return status code
+ */
+static int tls_validator_start ( struct tls_connection *tls ) {
+	int rc;
+
+	/* Sanity check */
+	if ( is_pending ( &tls->server.validation ) ) {
+		DBGC ( tls, "TLS %p refusing to restart validation\n", tls );
+		return -EINVAL_HELLO_DONE;
+	}
+
+	/* Begin certificate validation */
+	if ( ( rc = create_validator ( &tls->server.validator,
+				       tls->server.chain,
+				       tls->server.root ) ) != 0 ) {
+		DBGC ( tls, "TLS %p could not start certificate validation: "
+		       "%s\n", tls, strerror ( rc ) );
+		return rc;
+	}
+	pending_get ( &tls->server.validation );
+
+	return 0;
+}
+
+/**
  * Handle certificate validation completion
  *
  * @v tls		TLS connection
@@ -3845,14 +4604,16 @@ static void tls_validator_done ( struct tls_connection *tls, int rc ) {
 	DBGC ( tls, "TLS %p certificate validation succeeded\n", tls );
 
 	/* Schedule transmission of applicable handshake messages */
-	tls->tx.pending |= ( TLS_TX_CLIENT_KEY_EXCHANGE |
-			     TLS_TX_CHANGE_CIPHER |
-			     TLS_TX_FINISHED );
 	if ( tls->client.chain ) {
 		tls->tx.pending |= TLS_TX_CERTIFICATE;
 		if ( ! list_empty ( &tls->client.chain->links ) )
 			tls->tx.pending |= TLS_TX_CERTIFICATE_VERIFY;
 	}
+	if ( ! tls_version ( tls, TLS_VERSION_TLS_1_3 ) ) {
+		tls->tx.pending |= ( TLS_TX_CLIENT_KEY_EXCHANGE |
+				     TLS_TX_CHANGE_CIPHER );
+	}
+	tls->tx.pending |= TLS_TX_FINISHED;
 	tls_tx_resume ( tls );
 
 	return;
@@ -3937,19 +4698,12 @@ static void tls_tx_step ( struct tls_connection *tls ) {
 		}
 		tls->tx.pending &= ~TLS_TX_CERTIFICATE_VERIFY;
 	} else if ( tls->tx.pending & TLS_TX_CHANGE_CIPHER ) {
-		/* Send Change Cipher, and then change the cipher in use */
+		/* Send Change Cipher */
 		if ( ( rc = tls_send_change_cipher ( tls ) ) != 0 ) {
 			DBGC ( tls, "TLS %p could not send Change Cipher: "
 			       "%s\n", tls, strerror ( rc ) );
 			goto err;
 		}
-		if ( ( rc = tls_change_cipher ( tls, &tls->tx.cipherspec,
-						&tls->channel.tx ) ) != 0 ) {
-			DBGC ( tls, "TLS %p could not activate TX cipher: "
-			       "%s\n", tls, strerror ( rc ) );
-			goto err;
-		}
-		tls->tx.seq = 0;
 		tls->tx.pending &= ~TLS_TX_CHANGE_CIPHER;
 	} else if ( tls->tx.pending & TLS_TX_FINISHED ) {
 		/* Send Finished */
@@ -4018,14 +4772,17 @@ int add_tls ( struct interface *xfer, const char *name,
 	tls->client.key = privkey_get ( key ? key : &private_key );
 	tls->server.root = x509_root_get ( root ? root : &root_certificates );
 	tls->version = TLS_VERSION_MAX;
+	tls->legacy_version = TLS_LEGACY_VERSION_MAX;
+	tls->suite = &tls_cipher_suite_null;
+	tls->group = table_start ( TLS_NAMED_GROUPS );
 	channel_init ( &tls->channel, &tls_channel_ops );
 	tls_clear_digest ( tls );
+	tls->tx.cipherspec.suite = &tls_cipher_suite_null;
 	tls->tx.cipherspec.writer = &tls_client;
-	tls_clear_cipher ( tls, &tls->tx.cipherspec.active );
-	tls_clear_cipher ( tls, &tls->tx.cipherspec.pending );
+	tls->tx.cipherspec.pipe = &tls->channel.tx;
+	tls->rx.cipherspec.suite = &tls_cipher_suite_null;
 	tls->rx.cipherspec.writer = &tls_server;
-	tls_clear_cipher ( tls, &tls->rx.cipherspec.active );
-	tls_clear_cipher ( tls, &tls->rx.cipherspec.pending );
+	tls->rx.cipherspec.pipe = &tls->channel.rx;
 	iob_populate ( &tls->rx.iobuf, &tls->rx.header, 0,
 		       sizeof ( tls->rx.header ) );
 	INIT_LIST_HEAD ( &tls->rx.data );

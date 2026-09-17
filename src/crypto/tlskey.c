@@ -759,6 +759,16 @@ int tlskey_tbshash ( struct tls_key_schedule *tlskey,
 		return -EPROTO;
 	}
 
+	/* Signable digest values must be constructed over the
+	 * parameters used to establish a shared secret, and so a
+	 * shared secret must exist.
+	 */
+	if ( ! ( tlskey->kdf.flags & TLSKEY_KDF_KEYED ) ) {
+		DBGC ( tlskey, "TLSKEY %p cannot generate signable digest "
+		       "without a shared secret\n", tlskey );
+		return -EPROTO;
+	}
+
 	/* Generate digest value */
 	DBGC2 ( tlskey, "TLSKEY %p generating signable %s %s digest\n",
 		tlskey, end->name, digest->name );
@@ -1720,6 +1730,17 @@ static int tlskey_hash_tbshash ( struct tls_key_schedule *tlskey,
 			 digest->digestsize );
 
 	} else {
+
+		/* Additional data (i.e. the ServerKeyExchange
+		 * parameters) must be incorporated, since otherwise
+		 * the digest does not cover the parameters used to
+		 * establish the shared secret.
+		 */
+		if ( ! len ) {
+			DBGC ( tlskey, "TLSKEY %p cannot generate digest "
+			       "without additional data\n", tlskey );
+			return -ENOTSUP;
+		}
 
 		/* Generate ServerKeyExchange digest */
 		digest_init ( digest, tmp.ctx );

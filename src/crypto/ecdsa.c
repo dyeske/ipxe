@@ -283,7 +283,7 @@ static int ecdsa_parse_key ( struct ecdsa_key *key,
  * @v ctx		ECDSA context
  * @v rs0		Element 0 of signature "r" or "s" value
  * @v raw		ASN.1 cursor
- * @ret rc		Return status code
+ * @ret len		Canonical length of "r"/"s", or negative error
  */
 static int ecdsa_parse_signature ( struct ecdsa_context *ctx,
 				   bigint_element_t *rs0,
@@ -295,6 +295,8 @@ static int ecdsa_parse_signature ( struct ecdsa_context *ctx,
 	bigint_t ( size ) __attribute__ (( may_alias )) *rs =
 		( ( void * ) rs0 );
 	struct asn1_cursor cursor;
+	uint8_t msb;
+	size_t len;
 	int rc;
 
 	/* Enter integer */
@@ -320,7 +322,12 @@ static int ecdsa_parse_signature ( struct ecdsa_context *ctx,
 		return -ERANGE;
 	}
 
-	return 0;
+	/* Calculate canonical length */
+	msb = *( ( const uint8_t * ) cursor.data );
+	len = ( cursor.len + ( ( msb & 0x80 ) ? 1 : 0 ) );
+	len += asn1_header_len ( len );
+
+	return len;
 }
 
 /**
@@ -839,6 +846,9 @@ static int ecdsa_verify ( struct pubkey_algorithm *pubkey __unused,
 			  const struct asn1_cursor *signature ) {
 	struct ecdsa_context ctx;
 	struct asn1_cursor cursor;
+	int rlen;
+	int slen;
+	size_t len;
 	int rc;
 
 	/* Initialise context */
@@ -850,11 +860,25 @@ static int ecdsa_verify ( struct pubkey_algorithm *pubkey __unused,
 	asn1_enter ( &cursor, ASN1_SEQUENCE );
 
 	/* Extract "r" and "s" values */
-	if ( ( rc = ecdsa_parse_signature ( &ctx, ctx.r0, &cursor ) ) != 0 )
-		goto err_r;
+	if ( ( rlen = ecdsa_parse_signature ( &ctx, ctx.r0, &cursor ) ) < 0 ) {
+		rc = rlen;
+		goto err_parse;
+	}
 	asn1_skip_any ( &cursor );
-	if ( ( rc = ecdsa_parse_signature ( &ctx, ctx.s0, &cursor ) ) != 0 )
-		goto err_s;
+	if ( ( slen = ecdsa_parse_signature ( &ctx, ctx.s0, &cursor ) ) < 0 ) {
+		rc = slen;
+		goto err_parse;
+	}
+
+	/* Check for any extraneous content in signature */
+	len = ( rlen + slen );
+	len += asn1_header_len ( len );
+	if ( len != signature->len ) {
+		DBGC ( &ctx, "ECDSA %p non-canonical signature:\n", &ctx );
+		DBGC_HDA ( &ctx, 0, signature->data, signature->len );
+		rc = -EINVAL_SIGNATURE;
+		goto err_parse;
+	}
 
 	/* Verify signature */
 	if ( ( rc = ecdsa_verify_rs ( &ctx ) ) != 0 )
@@ -866,8 +890,7 @@ static int ecdsa_verify ( struct pubkey_algorithm *pubkey __unused,
 	return 0;
 
  err_verify:
- err_s:
- err_r:
+ err_parse:
 	ecdsa_free ( &ctx );
  err_init:
 	return rc;

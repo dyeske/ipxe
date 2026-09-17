@@ -245,6 +245,8 @@ struct secure_channel_operations {
 			   const void *auth, size_t len );
 };
 
+extern struct cipher_algorithm channel_dead_cipher;
+
 /**
  * Initialise secure channel
  *
@@ -255,6 +257,8 @@ static inline void channel_init ( struct secure_channel *channel,
 				  struct secure_channel_operations *op ) {
 
 	channel->op = op;
+	channel->tx.cipher = &channel_dead_cipher;
+	channel->rx.cipher = &channel_dead_cipher;
 }
 
 /**
@@ -313,6 +317,7 @@ extern int channel_confirm ( struct secure_channel *channel,
 			     const void *auth, size_t len );
 extern int channel_establish ( struct secure_channel *channel,
 			       const char *name, struct x509_root *root );
+extern void channel_clear_cipher ( struct secure_pipe *pipe );
 extern int channel_set_cipher ( struct secure_channel *channel,
 				struct secure_pipe *pipe,
 				struct cipher_algorithm *cipher,

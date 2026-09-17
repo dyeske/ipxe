@@ -169,6 +169,16 @@ REQUIRE_OBJECT ( rsa_sha384 );
 REQUIRE_OBJECT ( rsa_sha512 );
 #endif
 
+/* RSA and SHA-512/224 */
+#if defined ( CRYPTO_PUBKEY_RSA ) && defined ( CRYPTO_DIGEST_SHA512_224 )
+REQUIRE_OBJECT ( rsa_sha512_224 );
+#endif
+
+/* RSA and SHA-512/256 */
+#if defined ( CRYPTO_PUBKEY_RSA ) && defined ( CRYPTO_DIGEST_SHA512_256 )
+REQUIRE_OBJECT ( rsa_sha512_256 );
+#endif
+
 /* RSA, AES-CBC, and SHA-1 */
 #if defined ( CRYPTO_EXCHANGE_PUBKEY ) && defined ( CRYPTO_PUBKEY_RSA ) && \
     defined ( CRYPTO_CIPHER_AES_CBC ) && defined ( CRYPTO_DIGEST_SHA1 )
@@ -295,4 +305,14 @@ REQUIRE_OBJECT ( ecdhe_ecdsa_aes_gcm_sha256 );
 #if defined ( CRYPTO_EXCHANGE_ECDHE ) && defined ( CRYPTO_PUBKEY_ECDSA ) && \
     defined ( CRYPTO_CIPHER_AES_GCM ) && defined ( CRYPTO_DIGEST_SHA384 )
 REQUIRE_OBJECT ( ecdhe_ecdsa_aes_gcm_sha384 );
+#endif
+
+/* AES-GCM and SHA-256 */
+#if defined ( CRYPTO_CIPHER_AES_GCM ) && defined ( CRYPTO_DIGEST_SHA256 )
+REQUIRE_OBJECT ( aes_gcm_sha256 );
+#endif
+
+/* AES-GCM and SHA-384 */
+#if defined ( CRYPTO_CIPHER_AES_GCM ) && defined ( CRYPTO_DIGEST_SHA384 )
+REQUIRE_OBJECT ( aes_gcm_sha384 );
 #endif
