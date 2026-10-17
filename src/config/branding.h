@@ -196,6 +196,9 @@ FILE_SECBOOT ( PERMITTED );
  */
 #define PRODUCT_SBAT_GENERATION 0
 
+#include <config/named.h>
+#include NAMED_CONFIG(branding.h)
 #include <config/local/branding.h>
+#include LOCAL_NAMED_CONFIG(branding.h)
 
 #endif /* CONFIG_BRANDING_H */
