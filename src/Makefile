@@ -136,8 +136,6 @@ INCDIRS		+= include .
 #
 ALL		:= bin/blib.a bin/ipxe.dsk bin/ipxe.lkrn bin/ipxe.iso \
 		   bin/ipxe.usb bin/ipxe.pxe bin/undionly.kpxe bin/rtl8139.rom \
-		   bin/undionly.kkpxe bin/undionly.exe bin/ipxe.kkpxe \
-		   bin/undionly.nbi bin/ipxe.nbi \
 		   bin/8086100e.mrom bin/80861209.rom bin/10500940.rom \
 		   bin/10222000.rom bin/10ec8139.rom bin/1af41000.rom \
 		   bin/8086100f.mrom bin/808610d3.mrom bin/15ad07b0.rom
